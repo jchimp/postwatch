@@ -349,10 +349,13 @@ def get_latest_totals_all(db_path: str) -> dict:
                 SUM(bounced) AS bounced,
                 SUM(rejected) AS rejected
             FROM (
-                SELECT DISTINCT ON (agent_url)
-                    agent_url, sent, deferred, bounced, rejected
+                SELECT agent_url, sent, deferred, bounced, rejected
                 FROM stats_snapshots
-                ORDER BY agent_url, ts DESC
+                WHERE (agent_url, ts) IN (
+                    SELECT agent_url, MAX(ts)
+                    FROM stats_snapshots
+                    GROUP BY agent_url
+                )
             )
             """,
         ).fetchone()

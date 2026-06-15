@@ -313,23 +313,17 @@ async function fetchOverview() {
             el.style.color = (q.queue_count > 0) ? 'var(--nord11)' : 'var(--nord14)';
         } catch {}
     } else {
-        // ── All hosts mode: show today's aggregated totals ────────────────────
+        // ── All hosts mode: show aggregated totals from latest snapshots ──────
         document.getElementById('statusDot').className = 'status-dot';
         document.getElementById('statusText').textContent = 'Aggregated';
 
-        // Get today's totals from daily data
+        // Get totals from latest snapshot of each agent (matches agent logs)
         try {
-            const daily = await fetchJSON('/api/chart/daily/all?days=1');
-            const today = daily[0];
-            if (today) {
-                document.getElementById('cardSent').textContent = today.sent ?? '—';
-                document.getElementById('cardDeferred').textContent = today.deferred ?? '—';
-                document.getElementById('cardBounced').textContent = today.bounced ?? '—';
-            } else {
-                document.getElementById('cardSent').textContent = '—';
-                document.getElementById('cardDeferred').textContent = '—';
-                document.getElementById('cardBounced').textContent = '—';
-            }
+            const resp = await fetchJSON('/api/totals/all');
+            const t = resp.totals || {};
+            document.getElementById('cardSent').textContent = t.sent ?? '—';
+            document.getElementById('cardDeferred').textContent = t.deferred ?? '—';
+            document.getElementById('cardBounced').textContent = t.bounced ?? '—';
         } catch {
             document.getElementById('cardSent').textContent = '—';
             document.getElementById('cardDeferred').textContent = '—';

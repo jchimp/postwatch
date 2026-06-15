@@ -334,6 +334,32 @@ def get_latest_snapshot(db_path: str, agent_url: str) -> dict | None:
     return dict(row) if row else None
 
 
+def get_latest_totals_all(db_path: str) -> dict:
+    """Return aggregated totals from the latest snapshot of each agent.
+
+    Uses the most recent snapshot per agent to avoid counting the same
+    running totals multiple times. Returns totals that match the agent logs.
+    """
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                SUM(sent) AS sent,
+                SUM(deferred) AS deferred,
+                SUM(bounced) AS bounced,
+                SUM(rejected) AS rejected
+            FROM (
+                SELECT DISTINCT ON (agent_url)
+                    agent_url, sent, deferred, bounced, rejected
+                FROM stats_snapshots
+                ORDER BY agent_url, ts DESC
+            )
+            """,
+        ).fetchone()
+
+    return dict(row) if row else {"sent": 0, "deferred": 0, "bounced": 0, "rejected": 0}
+
+
 # ── Agent management ──────────────────────────────────────────────────────────
 
 def get_agents(db_path: str) -> list[dict]:

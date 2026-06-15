@@ -487,6 +487,14 @@ def api_snapshot(agent_url):
     return jsonify(snap or {})
 
 
+@app.route("/api/totals/all")
+@login_required
+def api_totals_all():
+    """Return aggregated totals from latest snapshot of each agent."""
+    totals = models.get_latest_totals_all(config.DB_PATH)
+    return jsonify({"totals": totals})
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print(f"[postwatch] Dashboard on {config.HOST}:{config.PORT}")

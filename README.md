@@ -100,9 +100,8 @@ The installer will:
    ```bash
    sudo nano /opt/postwatch-agent/.env
    ```
-   - Set `API_KEY` to a strong random string (must match dashboard's `AGENT_API_KEY`)
-   - Set `SERVER_NAME` (e.g., "mail-relay-1")
-   - Verify `LOG_FILE`, `HOST`, `PORT`, `TOKEN_DIR`
+   - Set `API_KEY` to match the dashboard's key (you'll get this from Settings after starting the dashboard)
+   - Verify `LOG_FILE`, `HOST`, `PORT`, `TOKEN_DIR` are correct for your system
 
 2. Start the service:
    ```bash
@@ -148,8 +147,6 @@ The installer will:
    ```
    - `SECRET_KEY` — Flask session secret (use a long random string)
    - `ADMIN_USER` / `ADMIN_PASS` — Login credentials
-   - `AGENT_API_KEY` — Must match each agent's `API_KEY`
-   - `AGENTS` — Comma-separated list of agent URLs (e.g., `http://192.168.1.10:5100,http://192.168.1.11:5100`)
    - `POLL_INTERVAL_SECONDS` — Poll interval in seconds (default: 120)
 
 2. Start the dashboard:
@@ -157,27 +154,35 @@ The installer will:
    cd /opt/postwatch-dashboard
    docker-compose up --build -d
    ```
+   The agent API key is **auto-generated** on first startup and stored in the database.
 
-3. Access at `http://localhost:5000` (or configure reverse proxy for external access)
+3. Access at `http://localhost:5000` (or at the port specified in `.env` if PORT was customized)
 
-4. View logs:
+4. Log in and retrieve the API key:
+   - Go to **Settings** → **Agent API Key**
+   - Copy this key to each agent's `API_KEY` in `.env`
+   - To regenerate anytime: click **Regenerate** on the Settings page
+
+5. View logs:
    ```bash
    docker-compose logs -f
    ```
 
-#### Option 2: Local Development
+#### Option 2: Local Development (Without Docker)
 
-For development without Docker:
+For development or testing without Docker:
 
 ```bash
 cd dashboard
 cp .env.example .env
 nano .env  # Configure as needed
 pip install -r requirements.txt
-python app.py
+python app.py  # Flask dev server, for testing only
 ```
 
 Access at `http://localhost:5000`
+
+**Note:** Uses Flask dev server. For production, use Docker (systemd installation) with Gunicorn.
 
 ## Configuration
 
@@ -187,9 +192,6 @@ Access at `http://localhost:5000`
 # Shared secret — must match dashboard's AGENT_API_KEY
 API_KEY=changeme-use-a-long-random-string
 
-# Friendly name shown in dashboard
-SERVER_NAME=mail-relay-1
-
 # Path to Postfix mail log
 LOG_FILE=/var/log/mail.log
 
@@ -197,11 +199,11 @@ LOG_FILE=/var/log/mail.log
 HOST=0.0.0.0
 PORT=5100
 
-# Token monitoring
+# Token directory (agent-specific path)
 TOKEN_DIR=/var/spool/postfix/etc/tokens
-TOKEN_STALE_MINUTES=90
-TOKEN_EXPIRY_WARN_MINUTES=10
 ```
+
+**Note:** Agent name, server details, and token thresholds are now configured centrally in the dashboard. Add agents via Dashboard → Settings → Add Agent.
 
 ### Dashboard (.env)
 
@@ -215,12 +217,6 @@ SECRET_KEY=change-me-to-a-long-random-string
 ADMIN_USER=admin
 ADMIN_PASS=admin
 
-# Initial Agent API key (CAN be changed via Settings → Regenerate)
-AGENT_API_KEY=changeme-use-a-long-random-string
-
-# Initial agent URLs (CAN be managed via Settings → Add/Remove agents)
-AGENTS=http://192.168.1.10:5100,http://192.168.1.11:5100
-
 # Polling interval — NOT configurable via UI (seconds)
 POLL_INTERVAL_SECONDS=120
 
@@ -232,7 +228,12 @@ HOST=0.0.0.0
 PORT=5000
 ```
 
-**Note:** `SECRET_KEY`, `ADMIN_USER`, `ADMIN_PASS`, `POLL_INTERVAL_SECONDS`, `DB_PATH`, `HOST`, and `PORT` are **not changeable** via the Settings page — they're Flask-level configuration that would require a restart. Only `AGENT_API_KEY` and agent URLs are runtime-configurable via the Settings UI.
+**Startup-only settings:** `SECRET_KEY`, `ADMIN_USER`, `ADMIN_PASS`, `POLL_INTERVAL_SECONDS`, `DB_PATH`, `HOST`, and `PORT` require a restart to change.
+
+**Database-backed settings (configurable via Settings page):**
+- Agent API key (auto-generated on first startup, regenerate anytime)
+- Agent URLs and names (add/remove agents)
+- Token thresholds: `TOKEN_STALE_MINUTES` and `TOKEN_EXPIRY_WARN_MINUTES` (applied globally)
 
 ## API Endpoints (Agent)
 

@@ -95,9 +95,21 @@ def _get_agents() -> list[dict]:
 
 
 def _get_api_key() -> str:
-    """Get API key: from database if set, otherwise from .env."""
+    """Get API key from database. Generated at first DB initialization."""
     db_key = models.get_setting(config.DB_PATH, "AGENT_API_KEY")
-    return db_key if db_key else config.AGENT_API_KEY
+    if not db_key:
+        raise RuntimeError("AGENT_API_KEY not found in database. DB may not be initialized.")
+    return db_key
+
+
+def _get_token_thresholds() -> dict[str, int]:
+    """Get token threshold settings from database."""
+    stale = models.get_setting(config.DB_PATH, "TOKEN_STALE_MINUTES") or "90"
+    expiry_warn = models.get_setting(config.DB_PATH, "TOKEN_EXPIRY_WARN_MINUTES") or "10"
+    return {
+        "stale_minutes": int(stale),
+        "expiry_warn_minutes": int(expiry_warn),
+    }
 
 
 # ── Login / Logout ────────────────────────────────────────────────────────────
@@ -161,7 +173,8 @@ def tokens_page():
 @login_required
 def settings():
     api_key = _get_api_key()
-    return render_template("settings.html", agents=_get_agents(), api_key=api_key)
+    thresholds = _get_token_thresholds()
+    return render_template("settings.html", agents=_get_agents(), api_key=api_key, thresholds=thresholds)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -226,6 +239,33 @@ def api_regenerate_api_key():
     new_key = secrets.token_urlsafe(32)
     models.set_setting(config.DB_PATH, "AGENT_API_KEY", new_key)
     return jsonify({"api_key": new_key}), 200
+
+
+@app.route("/api/settings/token-thresholds", methods=["GET"])
+@login_required
+def api_get_token_thresholds():
+    """Get current token threshold settings."""
+    thresholds = _get_token_thresholds()
+    return jsonify(thresholds), 200
+
+
+@app.route("/api/settings/token-thresholds", methods=["POST"])
+@login_required
+def api_set_token_thresholds():
+    """Update token threshold settings. Expects JSON: {stale_minutes, expiry_warn_minutes}"""
+    data = request.get_json()
+    try:
+        stale = int(data.get("stale_minutes", 90))
+        expiry_warn = int(data.get("expiry_warn_minutes", 10))
+
+        if stale < 0 or expiry_warn < 0:
+            return jsonify({"error": "values must be non-negative"}), 400
+
+        models.set_setting(config.DB_PATH, "TOKEN_STALE_MINUTES", str(stale))
+        models.set_setting(config.DB_PATH, "TOKEN_EXPIRY_WARN_MINUTES", str(expiry_warn))
+        return jsonify({"stale_minutes": stale, "expiry_warn_minutes": expiry_warn}), 200
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid values"}), 400
 
 
 # ── Live proxy: GET endpoints ─────────────────────────────────────────────────
@@ -312,8 +352,12 @@ def api_logs_stream(agent_url):
 @login_required
 def api_token_status(agent_url):
     try:
+        headers = _agent_headers()
+        thresholds = _get_token_thresholds()
+        headers["X-Token-Stale-Minutes"] = str(thresholds["stale_minutes"])
+        headers["X-Token-Expiry-Warn-Minutes"] = str(thresholds["expiry_warn_minutes"])
         r = http_requests.get(
-            f"{agent_url}/token-status", headers=_agent_headers(), timeout=10
+            f"{agent_url}/token-status", headers=headers, timeout=10
         )
         return jsonify(r.json()), r.status_code
     except Exception as exc:

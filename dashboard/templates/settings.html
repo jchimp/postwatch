@@ -34,6 +34,35 @@
     </div>
 </div>
 
+<!-- ── Token Thresholds Section ──────────────────────────────────────────────── -->
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0"><i class="bi bi-hourglass-split"></i> Token Thresholds</h4>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <p class="text-muted small mb-3">Global OAuth token monitoring settings applied to all agents.</p>
+
+        <div class="row g-3">
+            <div class="col-md-6">
+                <label for="staleMinsInput" class="form-label">Token Stale After (minutes)</label>
+                <input type="number" id="staleMinsInput" class="form-control form-control-sm" min="0" max="1440" value="{{ thresholds.stale_minutes }}">
+                <small class="text-muted">Warn if a token file hasn't been modified in this long.</small>
+            </div>
+            <div class="col-md-6">
+                <label for="expiryWarnInput" class="form-label">Token Expiry Warning (minutes)</label>
+                <input type="number" id="expiryWarnInput" class="form-control form-control-sm" min="0" max="240" value="{{ thresholds.expiry_warn_minutes }}">
+                <small class="text-muted">Warn if a token expires within this many minutes.</small>
+            </div>
+        </div>
+
+        <div class="d-flex gap-2 mt-3">
+            <button class="btn btn-sm btn-primary" onclick="saveTokenThresholds()">Save Settings</button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="resetTokenThresholds()">Reset to Defaults</button>
+        </div>
+    </div>
+</div>
+
 <!-- ── Agents Section ────────────────────────────────────────────────────────── -->
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h4 class="mb-0"><i class="bi bi-broadcast"></i> Configured Agents</h4>
@@ -280,6 +309,44 @@ function loadAgents() {
             location.reload();
         })
         .catch(err => console.error('Error loading agents:', err));
+}
+
+function saveTokenThresholds() {
+    const staleMin = parseInt(document.getElementById('staleMinsInput').value);
+    const expiryWarn = parseInt(document.getElementById('expiryWarnInput').value);
+
+    if (isNaN(staleMin) || isNaN(expiryWarn) || staleMin < 0 || expiryWarn < 0) {
+        showAlert('⚠ Invalid values', 'warning');
+        return;
+    }
+
+    fetch('/api/settings/token-thresholds', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            stale_minutes: staleMin,
+            expiry_warn_minutes: expiryWarn
+        })
+    })
+        .then(r => r.json())
+        .then(data => {
+            if (data.stale_minutes !== undefined) {
+                showAlert('✓ Token thresholds updated');
+            } else {
+                showAlert('✗ ' + (data.error || 'Failed to save'), 'danger');
+            }
+        })
+        .catch(err => showAlert('✗ Error: ' + err, 'danger'));
+}
+
+function resetTokenThresholds() {
+    if (!confirm('Reset to defaults? (90 mins stale, 10 mins warning)')) {
+        return;
+    }
+
+    document.getElementById('staleMinsInput').value = 90;
+    document.getElementById('expiryWarnInput').value = 10;
+    saveTokenThresholds();
 }
 </script>
 {% endblock %}

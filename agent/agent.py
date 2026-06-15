@@ -25,15 +25,19 @@ load_dotenv()
 
 # ── Config ────────────────────────────────────────────────────────────────────
 API_KEY               = os.getenv("API_KEY", "changeme")
-SERVER_NAME           = os.getenv("SERVER_NAME", "mail-server")
 LOG_FILE              = os.getenv("LOG_FILE", "/var/log/mail.log")
 HOST                  = os.getenv("HOST", "0.0.0.0")
 PORT                  = int(os.getenv("PORT", 5100))
 
+# Server name is now managed in dashboard. This default is for backward compatibility.
+SERVER_NAME           = "postwatch-agent"
+
 # Phase 2 — Token monitoring
 TOKEN_DIR             = os.getenv("TOKEN_DIR", "")
-TOKEN_STALE_MINUTES   = int(os.getenv("TOKEN_STALE_MINUTES", 90))
-TOKEN_EXPIRY_WARN_MINUTES = int(os.getenv("TOKEN_EXPIRY_WARN_MINUTES", 10))
+
+# Token thresholds (defaults). Can be overridden by dashboard via request headers.
+TOKEN_STALE_MINUTES_DEFAULT   = 90
+TOKEN_EXPIRY_WARN_MINUTES_DEFAULT = 10
 
 app = Flask(__name__)
 
@@ -232,6 +236,14 @@ def token_status():
     if not os.path.isdir(TOKEN_DIR):
         return jsonify({"error": f"TOKEN_DIR not found: {TOKEN_DIR}"}), 404
 
+    # Read thresholds from request headers (set by dashboard), fall back to defaults
+    try:
+        token_stale_minutes = int(request.headers.get("X-Token-Stale-Minutes", TOKEN_STALE_MINUTES_DEFAULT))
+        token_expiry_warn_minutes = int(request.headers.get("X-Token-Expiry-Warn-Minutes", TOKEN_EXPIRY_WARN_MINUTES_DEFAULT))
+    except (ValueError, TypeError):
+        token_stale_minutes = TOKEN_STALE_MINUTES_DEFAULT
+        token_expiry_warn_minutes = TOKEN_EXPIRY_WARN_MINUTES_DEFAULT
+
     now = datetime.now(timezone.utc)
     tokens = []
 
@@ -266,15 +278,15 @@ def token_status():
         if expiry_epoch is not None and expiry_minutes_remaining is not None:
             if expiry_minutes_remaining <= 0:
                 file_status = "expired"
-            elif expiry_minutes_remaining <= TOKEN_EXPIRY_WARN_MINUTES:
+            elif expiry_minutes_remaining <= token_expiry_warn_minutes:
                 file_status = "expiring_soon"
-            elif age_minutes > TOKEN_STALE_MINUTES:
+            elif age_minutes > token_stale_minutes:
                 file_status = "stale"
             else:
                 file_status = "ok"
         else:
             # No expiry data — fall back to staleness check only
-            file_status = "stale" if age_minutes > TOKEN_STALE_MINUTES else "ok"
+            file_status = "stale" if age_minutes > token_stale_minutes else "ok"
 
         tokens.append({
             "path": fpath,
@@ -287,11 +299,10 @@ def token_status():
         })
 
     return jsonify({
-        "server_name": SERVER_NAME,
         "token_dir": TOKEN_DIR,
         "thresholds": {
-            "stale_minutes": TOKEN_STALE_MINUTES,
-            "expiry_warn_minutes": TOKEN_EXPIRY_WARN_MINUTES,
+            "stale_minutes": token_stale_minutes,
+            "expiry_warn_minutes": token_expiry_warn_minutes,
         },
         "tokens": tokens,
         "ts": _utcnow(),

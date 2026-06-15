@@ -174,6 +174,54 @@ def get_hourly_stats(db_path: str, agent_url: str, hours: int = 24) -> list[dict
     return [dict(row) for row in rows]
 
 
+def get_weekly_stats(db_path: str, agent_url: str, weeks: int = 4) -> list[dict]:
+    """Return weekly aggregated stats for the last N weeks."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat()
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                strftime('%Y-W%W', ts)  AS week,
+                SUM(sent)               AS sent,
+                SUM(deferred)           AS deferred,
+                SUM(bounced)            AS bounced,
+                SUM(rejected)           AS rejected
+            FROM stats_snapshots
+            WHERE agent_url = ? AND ts >= ?
+            GROUP BY strftime('%Y-W%W', ts)
+            ORDER BY week
+            """,
+            (agent_url, cutoff),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def get_monthly_stats(db_path: str, agent_url: str, months: int = 12) -> list[dict]:
+    """Return monthly aggregated stats for the last N months."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=months*30)).isoformat()
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                strftime('%Y-%m', ts)   AS month,
+                SUM(sent)               AS sent,
+                SUM(deferred)           AS deferred,
+                SUM(bounced)            AS bounced,
+                SUM(rejected)           AS rejected
+            FROM stats_snapshots
+            WHERE agent_url = ? AND ts >= ?
+            GROUP BY strftime('%Y-%m', ts)
+            ORDER BY month
+            """,
+            (agent_url, cutoff),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
 def get_daily_stats_all(db_path: str, days: int = 7) -> list[dict]:
     """Return aggregated daily stats across all agents for the last N days."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()

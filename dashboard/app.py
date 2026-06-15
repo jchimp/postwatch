@@ -6,6 +6,7 @@ Main Flask application: auth, proxy routes to agents, polled stats API.
 import json
 from functools import wraps
 import secrets
+from urllib.parse import urlparse
 
 import requests as http_requests
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -72,10 +73,25 @@ def _agent_headers() -> dict:
     return {"X-API-Key": _get_api_key()}
 
 
-def _get_agents() -> list[str]:
-    """Get agent URLs from database only (post-migration from .env)."""
+def _agent_display(agent: dict) -> str:
+    """Label for an agent dropdown: its name, or the host/IP if no real name is set.
+
+    `add_agent` stores the URL as the name when none is given, so treat a name
+    equal to the URL (or blank) as "no name" and fall back to the URL host.
+    """
+    name = (agent.get("name") or "").strip()
+    url = agent.get("url", "")
+    if name and name != url:
+        return name
+    return urlparse(url).hostname or url
+
+
+def _get_agents() -> list[dict]:
+    """Get agent URLs and names from database only (post-migration from .env)."""
     agents = models.get_agents(config.DB_PATH)
-    return [agent["url"] for agent in agents]
+    for agent in agents:
+        agent["display"] = _agent_display(agent)
+    return agents
 
 
 def _get_api_key() -> str:
@@ -117,7 +133,10 @@ def index():
 @app.route("/overview")
 @login_required
 def overview():
-    return render_template("overview.html", agents=_get_agents())
+    agents = _get_agents()
+    for agent in agents:
+        agent["snapshot"] = models.get_latest_snapshot(config.DB_PATH, agent["url"]) or {}
+    return render_template("overview.html", agents=agents)
 
 
 @app.route("/logs")
@@ -141,9 +160,8 @@ def tokens_page():
 @app.route("/settings")
 @login_required
 def settings():
-    agents = models.get_agents(config.DB_PATH)
     api_key = _get_api_key()
-    return render_template("settings.html", agents=agents, api_key=api_key)
+    return render_template("settings.html", agents=_get_agents(), api_key=api_key)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -153,9 +171,11 @@ def settings():
 @app.route("/api/agents")
 @login_required
 def api_agents():
-    """Return the list of configured agent URLs from database."""
-    agents = models.get_agents(config.DB_PATH)
-    return jsonify([agent["url"] for agent in agents])
+    """Return the configured agents (url + display label) from the database."""
+    agents = _get_agents()
+    return jsonify([
+        {"url": agent["url"], "display": agent["display"]} for agent in agents
+    ])
 
 
 # ── Settings management ───────────────────────────────────────────────────────
@@ -207,6 +227,17 @@ def api_regenerate_api_key():
 
 
 # ── Live proxy: GET endpoints ─────────────────────────────────────────────────
+
+@app.route("/api/health/<path:agent_url>")
+@login_required
+def api_health(agent_url):
+    """Lightweight reachability check (agent /health needs no API key)."""
+    try:
+        r = http_requests.get(f"{agent_url}/health", timeout=5)
+        return jsonify(r.json()), r.status_code
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 502
+
 
 @app.route("/api/status/<path:agent_url>")
 @login_required

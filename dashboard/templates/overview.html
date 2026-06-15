@@ -11,8 +11,8 @@
     <div class="col-12">
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
-                Agent Status
-                <button class="btn btn-sm btn-outline-secondary" onclick="fetchAgentTable()">⟳ Refresh</button>
+                <span><i class="bi bi-pc-display"></i> Agent Status</span>
+                <button class="btn btn-sm btn-outline-secondary" onclick="fetchAgentTable()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
             </div>
             <div class="card-body p-0">
                 <table class="table table-sm table-dark mb-0">
@@ -28,7 +28,21 @@
                         </tr>
                     </thead>
                     <tbody id="agentTableBody">
-                        <tr><td colspan="7" class="text-muted text-center">Loading…</td></tr>
+                        {% for a in agents %}
+                        <tr data-agent-url="{{ a.url }}">
+                            <td><strong>{{ a.display }}</strong></td>
+                            <td class="agent-status">
+                                <span class="status-dot inactive"></span>Checking…
+                            </td>
+                            <td class="agent-sent">{{ a.snapshot.get('sent', '—') }}</td>
+                            <td class="agent-deferred">{{ a.snapshot.get('deferred', '—') }}</td>
+                            <td class="agent-bounced">{{ a.snapshot.get('bounced', '—') }}</td>
+                            <td>{{ a.snapshot.get('queue_count', '—') }}</td>
+                            <td class="text-muted agent-lastpoll" data-ts="{{ a.snapshot.get('ts', '') }}">—</td>
+                        </tr>
+                        {% else %}
+                        <tr><td colspan="7" class="text-muted text-center">No agents configured</td></tr>
+                        {% endfor %}
                     </tbody>
                 </table>
             </div>
@@ -38,18 +52,18 @@
 
 <!-- ── Per-Agent Controls ─────────────────────────────────────────────────── -->
 <div class="d-flex justify-content-between align-items-center mb-4">
-    <h4 class="mb-0">Overview</h4>
+    <h4 class="mb-0"><i class="bi bi-speedometer2"></i> Overview</h4>
     <div class="d-flex align-items-center gap-2">
         {% if agents|length > 1 %}
         <select id="agentSelect" class="form-select form-select-sm" style="width:auto">
             {% for a in agents %}
-            <option value="{{ a }}">{{ a }}</option>
+            <option value="{{ a.url }}">{{ a.display }}</option>
             {% endfor %}
         </select>
         {% else %}
-        <input type="hidden" id="agentSelect" value="{{ agents[0] if agents else '' }}">
+        <input type="hidden" id="agentSelect" value="{{ agents[0].url if agents else '' }}">
         {% endif %}
-        <button class="btn btn-sm btn-outline-secondary" onclick="fetchOverview()">⟳ Refresh</button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="fetchOverview()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
     </div>
 </div>
 
@@ -184,69 +198,51 @@ function timeAgo(isoString) {
 }
 
 // ── Agent Status Table ───────────────────────────────────────────────────────
-async function fetchAgentTable() {
-    const tbody = document.getElementById('agentTableBody');
+// Rows are rendered server-side from the DB (names + last snapshot). Here we
+// only refresh each row's live status independently, so one slow/unreachable
+// agent never blocks the others.
+function setStatusCell(row, dotClass, label) {
+    const cell = row.querySelector('.agent-status');
+    if (cell) cell.innerHTML = `<span class="status-dot ${dotClass}"></span>${label}`;
+}
 
-    let agents;
+async function refreshAgentRow(row) {
+    const url = row.dataset.agentUrl;
+    const a = enc(url);
+
+    // Reachability first — a failed health check means we skip the rest.
     try {
-        agents = await fetchJSON('/api/agents');
+        await fetchJSON(`/api/health/${a}`);
     } catch {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-muted text-center">Failed to load agent list</td></tr>';
+        setStatusCell(row, 'inactive', 'Unreachable');
         return;
     }
 
-    if (!agents || agents.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" class="text-muted text-center">No agents configured</td></tr>';
-        return;
+    // Postfix state.
+    try {
+        const st = await fetchJSON(`/api/status/${a}`);
+        const active = st?.active ?? false;
+        setStatusCell(row, active ? 'active' : 'inactive', active ? 'Active' : 'Inactive');
+    } catch {
+        setStatusCell(row, 'inactive', 'Unreachable');
     }
 
-    // Fetch status, stats, and snapshot for every agent in parallel
-    const results = await Promise.allSettled(agents.map(async (url) => {
-        const a = enc(url);
-        const [statusRes, statsRes, snapRes] = await Promise.allSettled([
-            fetchJSON(`/api/status/${a}`),
-            fetchJSON(`/api/stats/${a}`),
-            fetchJSON(`/api/snapshot/${a}`),
-        ]);
-        return {
-            url,
-            status: statusRes.status === 'fulfilled' ? statusRes.value : null,
-            stats:  statsRes.status  === 'fulfilled' ? statsRes.value  : null,
-            snap:   snapRes.status   === 'fulfilled' ? snapRes.value   : null,
-        };
-    }));
+    // Live counts (last poll values are already shown; update to current).
+    try {
+        const st = await fetchJSON(`/api/stats/${a}`);
+        const t = st?.totals || {};
+        row.querySelector('.agent-sent').textContent     = t.sent ?? '—';
+        row.querySelector('.agent-deferred').textContent = t.deferred ?? '—';
+        row.querySelector('.agent-bounced').textContent  = t.bounced ?? '—';
+    } catch {}
+}
 
-    let html = '';
-    for (const result of results) {
-        if (result.status !== 'fulfilled') {
-            html += `<tr>
-                <td class="text-muted">Unknown</td>
-                <td><span class="status-dot inactive"></span>Error</td>
-                <td colspan="5">—</td>
-            </tr>`;
-            continue;
-        }
-        const { url, status, stats, snap } = result.value;
-        const name    = status?.server_name || snap?.server_name || url;
-        const active  = status?.active ?? false;
-        const totals  = stats?.totals || {};
-        const queueCt = snap?.queue_count ?? '—';
-        const lastTs  = snap?.ts || null;
-
-        const dotClass = active ? 'active' : 'inactive';
-        const stLabel  = status ? (active ? 'Active' : 'Inactive') : 'Unreachable';
-
-        html += `<tr>
-            <td><strong>${name}</strong></td>
-            <td><span class="status-dot ${dotClass}"></span>${stLabel}</td>
-            <td>${totals.sent ?? '—'}</td>
-            <td>${totals.deferred ?? '—'}</td>
-            <td>${totals.bounced ?? '—'}</td>
-            <td>${queueCt}</td>
-            <td class="text-muted">${timeAgo(lastTs)}</td>
-        </tr>`;
-    }
-    tbody.innerHTML = html;
+function fetchAgentTable() {
+    // Render relative "last poll" from the server-supplied timestamps.
+    document.querySelectorAll('#agentTableBody .agent-lastpoll').forEach(el => {
+        el.textContent = timeAgo(el.dataset.ts || null);
+    });
+    document.querySelectorAll('#agentTableBody tr[data-agent-url]').forEach(refreshAgentRow);
 }
 
 // ── Per-Agent Overview (stat cards + charts) ─────────────────────────────────
@@ -262,7 +258,10 @@ async function fetchOverview() {
             'status-dot ' + (s.active ? 'active' : 'inactive');
         document.getElementById('statusText').textContent =
             s.active ? 'Active' : 'Inactive';
-    } catch { document.getElementById('statusText').textContent = 'Unreachable'; }
+    } catch {
+        document.getElementById('statusDot').className = 'status-dot inactive';
+        document.getElementById('statusText').textContent = 'Unreachable';
+    }
 
     // Live stats (from agent log parser)
     try {
@@ -314,8 +313,7 @@ async function fetchOverview() {
 document.addEventListener('DOMContentLoaded', () => {
     fetchAgentTable();
     fetchOverview();
-    const sel = document.getElementById('agentSelect');
-    if (sel && sel.tagName === 'SELECT') sel.addEventListener('change', fetchOverview);
+    setupAgentSelectHandler(fetchOverview);
     setInterval(() => { fetchAgentTable(); fetchOverview(); }, 120_000);
 });
 </script>

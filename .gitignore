@@ -9,6 +9,7 @@ NOTES.md
 *.bak*
 *.old*
 *.backup*
+*.orig*
 
 #=== Data ===
 data/

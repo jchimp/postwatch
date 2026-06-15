@@ -3,18 +3,18 @@
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="mb-0">OAuth Token Health</h4>
+    <h4 class="mb-0"><i class="bi bi-key"></i> OAuth Token Health</h4>
     <div class="d-flex align-items-center gap-2">
         {% if agents|length > 1 %}
         <select id="agentSelect" class="form-select form-select-sm" style="width:auto">
             {% for a in agents %}
-            <option value="{{ a }}">{{ a }}</option>
+            <option value="{{ a.url }}">{{ a.display }}</option>
             {% endfor %}
         </select>
         {% else %}
-        <input type="hidden" id="agentSelect" value="{{ agents[0] if agents else '' }}">
+        <input type="hidden" id="agentSelect" value="{{ agents[0].url if agents else '' }}">
         {% endif %}
-        <button class="btn btn-sm btn-outline-secondary" onclick="fetchTokens()">⟳ Refresh</button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="fetchTokens()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
     </div>
 </div>
 
@@ -112,8 +112,7 @@ async function fetchTokens() {
 
 document.addEventListener('DOMContentLoaded', () => {
     fetchTokens();
-    const sel = document.getElementById('agentSelect');
-    if (sel && sel.tagName === 'SELECT') sel.addEventListener('change', fetchTokens);
+    setupAgentSelectHandler(fetchTokens);
     setInterval(fetchTokens, 60_000);
 });
 </script>

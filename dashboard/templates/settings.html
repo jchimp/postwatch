@@ -18,23 +18,25 @@
 
 <!-- ── API Key Section ──────────────────────────────────────────────────────── -->
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="mb-0">🔑 Agent API Key</h4>
-    <div class="d-flex align-items-center gap-2">
-        <button class="btn btn-sm btn-outline-secondary" onclick="copyApiKey()">📋 Copy</button>
-        <button class="btn btn-sm btn-warning" onclick="regenerateApiKey()">🔄 Regenerate</button>
-    </div>
+    <h4 class="mb-0"><i class="bi bi-key"></i> Agent API Key</h4>
 </div>
 
 <div class="card mb-4">
     <div class="card-body">
         <p class="text-muted small mb-2">This key must match the <code>AGENT_API_KEY</code> in each agent's <code>.env</code> file.</p>
-        <div class="api-key-display" id="apiKeyDisplay">{{ api_key }}</div>
+        <div class="d-flex justify-content-between align-items-center gap-2">
+            <div class="api-key-display flex-grow-1" id="apiKeyDisplay">{{ api_key }}</div>
+            <div class="d-flex align-items-center gap-2 flex-shrink-0">
+                <button class="btn btn-sm btn-outline-secondary" onclick="copyApiKey()"><i class="bi bi-clipboard"></i> Copy</button>
+                <button class="btn btn-sm btn-warning" onclick="regenerateApiKey()"><i class="bi bi-arrow-clockwise"></i> Regenerate</button>
+            </div>
+        </div>
     </div>
 </div>
 
 <!-- ── Agents Section ────────────────────────────────────────────────────────── -->
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="mb-0">📡 Configured Agents</h4>
+    <h4 class="mb-0"><i class="bi bi-broadcast"></i> Configured Agents</h4>
 </div>
 
 <div class="card mb-4">
@@ -44,14 +46,14 @@
         <!-- Add Agent Form -->
         <div class="d-flex align-items-end gap-2 mb-3">
             <div class="flex-grow-1">
-                <label class="form-label small mb-1">Agent URL</label>
-                <input type="url" id="newAgentUrl" class="form-control form-control-sm"
-                       placeholder="http://192.168.1.10:5100" required>
-            </div>
-            <div class="flex-grow-1">
                 <label class="form-label small mb-1">Name (optional)</label>
                 <input type="text" id="newAgentName" class="form-control form-control-sm"
                        placeholder="mail-relay-1">
+            </div>
+            <div class="flex-grow-1">
+                <label class="form-label small mb-1">Agent URL</label>
+                <input type="url" id="newAgentUrl" class="form-control form-control-sm"
+                       placeholder="http://192.168.1.10:5100" required>
             </div>
             <button class="btn btn-sm btn-primary" onclick="addAgent()">Add Agent</button>
         </div>
@@ -60,28 +62,34 @@
         <table class="table table-sm table-dark mb-0">
             <thead>
                 <tr>
-                    <th style="width: 60%">Agent URL</th>
-                    <th style="width: 25%">Name</th>
+                    <th style="width: 22%">Name</th>
+                    <th style="width: 48%">Agent URL</th>
+                    <th style="width: 15%">Health</th>
                     <th style="width: 15%; text-align: center;">Action</th>
                 </tr>
             </thead>
             <tbody id="agentsTableBody">
                 {% if agents %}
                     {% for agent in agents %}
-                    <tr data-agent-id="{{ agent.id }}">
+                    <tr data-agent-id="{{ agent.id }}" data-agent-url="{{ agent.url }}">
+                        <td>{{ agent.display }}</td>
                         <td class="font-monospace text-break" style="font-size: 0.9rem;">{{ agent.url }}</td>
-                        <td>{{ agent.name or "—" }}</td>
-                        <td style="text-align: center;">
+                        <td><span class="agent-health text-muted small">—</span></td>
+                        <td style="text-align: center; white-space: nowrap;">
+                            <button class="btn btn-sm btn-outline-secondary"
+                                    onclick="checkAgent(this)" title="Run health check">
+                                <i class="bi bi-check-circle"></i> Check
+                            </button>
                             <button class="btn btn-sm btn-outline-danger"
                                     onclick="deleteAgent({{ agent.id }})">
-                                🗑️
+                                <i class="bi bi-trash"></i>
                             </button>
                         </td>
                     </tr>
                     {% endfor %}
                 {% else %}
                     <tr>
-                        <td colspan="3" class="text-center text-muted small">
+                        <td colspan="4" class="text-center text-muted small">
                             No agents configured. Add one to get started.
                         </td>
                     </tr>
@@ -196,9 +204,49 @@ function addAgent() {
         });
 }
 
+async function checkAgent(btn) {
+    const row = btn.closest('tr');
+    const url = row.dataset.agentUrl;
+    const a = encodeURIComponent(url);
+    const label = row.querySelector('.agent-health');
+
+    btn.disabled = true;
+    label.className = 'agent-health text-muted small';
+    label.textContent = 'Checking…';
+
+    // Reachability first; if that fails, don't bother with status.
+    try {
+        await fetch(`/api/health/${a}`).then(r => {
+            if (!r.ok) throw new Error();
+        });
+    } catch {
+        label.className = 'agent-health text-danger-nord small';
+        label.innerHTML = '<i class="bi bi-x-circle"></i> Unreachable';
+        btn.disabled = false;
+        return;
+    }
+
+    // Reachable — check postfix state.
+    try {
+        const st = await fetch(`/api/status/${a}`).then(r => r.json());
+        if (st.active) {
+            label.className = 'agent-health text-success-nord small';
+            label.innerHTML = '<i class="bi bi-check-circle"></i> Active';
+        } else {
+            label.className = 'agent-health text-warning-nord small';
+            label.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Online · postfix down';
+        }
+    } catch {
+        label.className = 'agent-health text-success-nord small';
+        label.innerHTML = '<i class="bi bi-check-circle"></i> Online';
+    }
+
+    btn.disabled = false;
+}
+
 function deleteAgent(id) {
     const row = document.querySelector(`tr[data-agent-id="${id}"]`);
-    const url = row.querySelector('td').textContent.trim();
+    const url = row.dataset.agentUrl;
     document.getElementById('deleteAgentUrl').textContent = url;
     deleteAgentId = id;
     new bootstrap.Modal(document.getElementById('deleteAgentModal')).show();

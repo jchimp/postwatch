@@ -222,6 +222,54 @@ def get_hourly_stats_all(db_path: str, hours: int = 24) -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def get_weekly_stats_all(db_path: str, weeks: int = 4) -> list[dict]:
+    """Return aggregated weekly stats across all agents for the last N weeks."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat()
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                strftime('%Y-W%W', ts)  AS week,
+                SUM(sent)               AS sent,
+                SUM(deferred)           AS deferred,
+                SUM(bounced)            AS bounced,
+                SUM(rejected)           AS rejected
+            FROM stats_snapshots
+            WHERE ts >= ?
+            GROUP BY strftime('%Y-W%W', ts)
+            ORDER BY week
+            """,
+            (cutoff,),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def get_monthly_stats_all(db_path: str, months: int = 12) -> list[dict]:
+    """Return aggregated monthly stats across all agents for the last N months."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=months*30)).isoformat()
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                strftime('%Y-%m', ts)   AS month,
+                SUM(sent)               AS sent,
+                SUM(deferred)           AS deferred,
+                SUM(bounced)            AS bounced,
+                SUM(rejected)           AS rejected
+            FROM stats_snapshots
+            WHERE ts >= ?
+            GROUP BY strftime('%Y-%m', ts)
+            ORDER BY month
+            """,
+            (cutoff,),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
 def get_latest_snapshot(db_path: str, agent_url: str) -> dict | None:
     """Return the most recent snapshot for an agent, or None."""
     with _connect(db_path) as conn:

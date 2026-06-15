@@ -448,6 +448,22 @@ def api_chart_hourly_all():
     return jsonify(data)
 
 
+@app.route("/api/chart/weekly/all")
+@login_required
+def api_chart_weekly_all():
+    weeks = request.args.get("weeks", 4, type=int)
+    data = models.get_weekly_stats_all(config.DB_PATH, weeks=weeks)
+    return jsonify(data)
+
+
+@app.route("/api/chart/monthly/all")
+@login_required
+def api_chart_monthly_all():
+    months = request.args.get("months", 12, type=int)
+    data = models.get_monthly_stats_all(config.DB_PATH, months=months)
+    return jsonify(data)
+
+
 @app.route("/api/snapshot/<path:agent_url>")
 @login_required
 def api_snapshot(agent_url):

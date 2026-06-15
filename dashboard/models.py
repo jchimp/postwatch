@@ -223,21 +223,34 @@ def get_monthly_stats(db_path: str, agent_url: str, months: int = 12) -> list[di
 
 
 def get_daily_stats_all(db_path: str, days: int = 7) -> list[dict]:
-    """Return aggregated daily stats across all agents for the last N days."""
+    """Return aggregated daily stats across all agents for the last N days.
+
+    Uses MAX per agent per day to avoid double-counting multiple snapshots.
+    """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
             SELECT
-                date(ts)       AS day,
+                day,
                 SUM(sent)      AS sent,
                 SUM(deferred)  AS deferred,
                 SUM(bounced)   AS bounced,
                 SUM(rejected)  AS rejected
-            FROM stats_snapshots
-            WHERE ts >= ?
-            GROUP BY date(ts)
+            FROM (
+                SELECT
+                    date(ts)       AS day,
+                    agent_url,
+                    MAX(sent)      AS sent,
+                    MAX(deferred)  AS deferred,
+                    MAX(bounced)   AS bounced,
+                    MAX(rejected)  AS rejected
+                FROM stats_snapshots
+                WHERE ts >= ?
+                GROUP BY date(ts), agent_url
+            )
+            GROUP BY day
             ORDER BY day
             """,
             (cutoff,),
@@ -247,21 +260,34 @@ def get_daily_stats_all(db_path: str, days: int = 7) -> list[dict]:
 
 
 def get_hourly_stats_all(db_path: str, hours: int = 24) -> list[dict]:
-    """Return aggregated hourly stats across all agents for the last N hours."""
+    """Return aggregated hourly stats across all agents for the last N hours.
+
+    Uses MAX per agent per hour to avoid double-counting multiple snapshots.
+    """
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
 
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
             SELECT
-                strftime('%Y-%m-%d %H', ts) AS hour,
+                hour,
                 SUM(sent)                   AS sent,
                 SUM(deferred)               AS deferred,
                 SUM(bounced)                AS bounced,
                 SUM(rejected)               AS rejected
-            FROM stats_snapshots
-            WHERE ts >= ?
-            GROUP BY strftime('%Y-%m-%d %H', ts)
+            FROM (
+                SELECT
+                    strftime('%Y-%m-%d %H', ts) AS hour,
+                    agent_url,
+                    MAX(sent)                   AS sent,
+                    MAX(deferred)               AS deferred,
+                    MAX(bounced)                AS bounced,
+                    MAX(rejected)               AS rejected
+                FROM stats_snapshots
+                WHERE ts >= ?
+                GROUP BY strftime('%Y-%m-%d %H', ts), agent_url
+            )
+            GROUP BY hour
             ORDER BY hour
             """,
             (cutoff,),
@@ -271,21 +297,34 @@ def get_hourly_stats_all(db_path: str, hours: int = 24) -> list[dict]:
 
 
 def get_weekly_stats_all(db_path: str, weeks: int = 4) -> list[dict]:
-    """Return aggregated weekly stats across all agents for the last N weeks."""
+    """Return aggregated weekly stats across all agents for the last N weeks.
+
+    Uses MAX per agent per week to avoid double-counting multiple snapshots.
+    """
     cutoff = (datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat()
 
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
             SELECT
-                strftime('%Y-W%W', ts)  AS week,
+                week,
                 SUM(sent)               AS sent,
                 SUM(deferred)           AS deferred,
                 SUM(bounced)            AS bounced,
                 SUM(rejected)           AS rejected
-            FROM stats_snapshots
-            WHERE ts >= ?
-            GROUP BY strftime('%Y-W%W', ts)
+            FROM (
+                SELECT
+                    strftime('%Y-W%W', ts)  AS week,
+                    agent_url,
+                    MAX(sent)               AS sent,
+                    MAX(deferred)           AS deferred,
+                    MAX(bounced)            AS bounced,
+                    MAX(rejected)           AS rejected
+                FROM stats_snapshots
+                WHERE ts >= ?
+                GROUP BY strftime('%Y-W%W', ts), agent_url
+            )
+            GROUP BY week
             ORDER BY week
             """,
             (cutoff,),
@@ -295,21 +334,34 @@ def get_weekly_stats_all(db_path: str, weeks: int = 4) -> list[dict]:
 
 
 def get_monthly_stats_all(db_path: str, months: int = 12) -> list[dict]:
-    """Return aggregated monthly stats across all agents for the last N months."""
+    """Return aggregated monthly stats across all agents for the last N months.
+
+    Uses MAX per agent per month to avoid double-counting multiple snapshots.
+    """
     cutoff = (datetime.now(timezone.utc) - timedelta(days=months*30)).isoformat()
 
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
             SELECT
-                strftime('%Y-%m', ts)   AS month,
+                month,
                 SUM(sent)               AS sent,
                 SUM(deferred)           AS deferred,
                 SUM(bounced)            AS bounced,
                 SUM(rejected)           AS rejected
-            FROM stats_snapshots
-            WHERE ts >= ?
-            GROUP BY strftime('%Y-%m', ts)
+            FROM (
+                SELECT
+                    strftime('%Y-%m', ts)   AS month,
+                    agent_url,
+                    MAX(sent)               AS sent,
+                    MAX(deferred)           AS deferred,
+                    MAX(bounced)            AS bounced,
+                    MAX(rejected)           AS rejected
+                FROM stats_snapshots
+                WHERE ts >= ?
+                GROUP BY strftime('%Y-%m', ts), agent_url
+            )
+            GROUP BY month
             ORDER BY month
             """,
             (cutoff,),

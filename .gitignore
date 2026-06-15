@@ -16,7 +16,6 @@ data/
 
 #=== Env / Secrets ===
 .env
-.env.*
 *.key
 *.pem
 

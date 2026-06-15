@@ -82,11 +82,19 @@ part2 = """## Agent Endpoints
 ```bash
 # Agent (needs root for postfix commands)
 cd agent && python3 agent.py
-# Dashboard (local)
+
+# Dashboard (local dev — Flask dev server)
 cd dashboard && pip install -r requirements.txt && python app.py
-# Dashboard (Docker)
+
+# Dashboard (Docker — production with Gunicorn)
 cd dashboard && docker compose up --build
 ```
+
+**Production notes:**
+- Dashboard runs under Gunicorn (2 workers, gthread threading)
+- Port configurable via .env PORT variable (default 5000)
+- Health check verifies login page reachability
+- Logs streamed to stdout for container log aggregation
 
 ## Conventions
 

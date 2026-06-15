@@ -158,26 +158,28 @@ The installer will:
    docker-compose up --build -d
    ```
 
-3. Access at `http://localhost:5000` (or configure reverse proxy for external access)
+3. Access at `http://localhost:5000` (or at the port specified in `.env` if PORT was customized)
 
 4. View logs:
    ```bash
    docker-compose logs -f
    ```
 
-#### Option 2: Local Development
+#### Option 2: Local Development (Without Docker)
 
-For development without Docker:
+For development or testing without Docker:
 
 ```bash
 cd dashboard
 cp .env.example .env
 nano .env  # Configure as needed
 pip install -r requirements.txt
-python app.py
+python app.py  # Flask dev server, for testing only
 ```
 
 Access at `http://localhost:5000`
+
+**Note:** Uses Flask dev server. For production, use Docker (systemd installation) with Gunicorn.
 
 ## Configuration
 

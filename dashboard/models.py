@@ -57,6 +57,23 @@ def init_db(db_path: str) -> None:
         """)
         conn.commit()
 
+        # Initialize default settings if they don't exist
+        now = datetime.now(timezone.utc).isoformat()
+        defaults = {
+            "TOKEN_STALE_MINUTES": "90",
+            "TOKEN_EXPIRY_WARN_MINUTES": "10",
+        }
+        for key, value in defaults.items():
+            existing = conn.execute(
+                "SELECT value FROM settings WHERE key = ?", (key,)
+            ).fetchone()
+            if not existing:
+                conn.execute(
+                    "INSERT INTO settings (key, value, updated) VALUES (?, ?, ?)",
+                    (key, value, now),
+                )
+        conn.commit()
+
 
 def save_snapshot(
     db_path: str,

@@ -16,9 +16,9 @@ ADMIN_PASS = os.getenv("ADMIN_PASS", "admin")  # plaintext in .env, bcrypt-check
 # ── Agent connectivity ────────────────────────────────────────────────────────
 AGENT_API_KEY = os.getenv("AGENT_API_KEY", "changeme")
 
-# Comma-separated list of agent base URLs, e.g. "http://mail1:5100,http://mail2:5100"
-_raw_agents = os.getenv("AGENTS", "")
-AGENTS = [url.strip() for url in _raw_agents.split(",") if url.strip()]
+# Agents are now managed in the dashboard Settings page (stored in SQLite).
+# This variable is kept for backward compatibility but is not used.
+AGENTS = []
 
 # ── Polling / Storage ────────────────────────────────────────────────────────
 POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", 120))

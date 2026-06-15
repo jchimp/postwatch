@@ -4,7 +4,9 @@
       "PowerShell(python -m py_compile dashboard/app.py)",
       "PowerShell(if \\($?\\) { \"OK\" })",
       "PowerShell(py -m py_compile dashboard/app.py)",
-      "Bash(xxd)"
+      "Bash(xxd)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

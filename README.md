@@ -187,9 +187,6 @@ Access at `http://localhost:5000`
 # Shared secret — must match dashboard's AGENT_API_KEY
 API_KEY=changeme-use-a-long-random-string
 
-# Friendly name shown in dashboard
-SERVER_NAME=mail-relay-1
-
 # Path to Postfix mail log
 LOG_FILE=/var/log/mail.log
 
@@ -197,11 +194,11 @@ LOG_FILE=/var/log/mail.log
 HOST=0.0.0.0
 PORT=5100
 
-# Token monitoring
+# Token directory (agent-specific path)
 TOKEN_DIR=/var/spool/postfix/etc/tokens
-TOKEN_STALE_MINUTES=90
-TOKEN_EXPIRY_WARN_MINUTES=10
 ```
+
+**Note:** Agent name, server details, and token thresholds are now configured centrally in the dashboard. Add agents via Dashboard → Settings → Add Agent.
 
 ### Dashboard (.env)
 
@@ -218,9 +215,6 @@ ADMIN_PASS=admin
 # Initial Agent API key (CAN be changed via Settings → Regenerate)
 AGENT_API_KEY=changeme-use-a-long-random-string
 
-# Initial agent URLs (CAN be managed via Settings → Add/Remove agents)
-AGENTS=http://192.168.1.10:5100,http://192.168.1.11:5100
-
 # Polling interval — NOT configurable via UI (seconds)
 POLL_INTERVAL_SECONDS=120
 
@@ -232,7 +226,12 @@ HOST=0.0.0.0
 PORT=5000
 ```
 
-**Note:** `SECRET_KEY`, `ADMIN_USER`, `ADMIN_PASS`, `POLL_INTERVAL_SECONDS`, `DB_PATH`, `HOST`, and `PORT` are **not changeable** via the Settings page — they're Flask-level configuration that would require a restart. Only `AGENT_API_KEY` and agent URLs are runtime-configurable via the Settings UI.
+**Startup-only settings:** `SECRET_KEY`, `ADMIN_USER`, `ADMIN_PASS`, `POLL_INTERVAL_SECONDS`, `DB_PATH`, `HOST`, and `PORT` require a restart to change.
+
+**Database-backed settings (configurable via Settings page):**
+- Agent API key (regenerate anytime)
+- Agent URLs and names (add/remove agents)
+- Token thresholds: `TOKEN_STALE_MINUTES` and `TOKEN_EXPIRY_WARN_MINUTES` (applied globally)
 
 ## API Endpoints (Agent)
 

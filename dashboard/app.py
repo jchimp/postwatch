@@ -432,6 +432,22 @@ def api_chart_hourly(agent_url):
     return jsonify(data)
 
 
+@app.route("/api/chart/daily/all")
+@login_required
+def api_chart_daily_all():
+    days = request.args.get("days", 7, type=int)
+    data = models.get_daily_stats_all(config.DB_PATH, days=days)
+    return jsonify(data)
+
+
+@app.route("/api/chart/hourly/all")
+@login_required
+def api_chart_hourly_all():
+    hours = request.args.get("hours", 24, type=int)
+    data = models.get_hourly_stats_all(config.DB_PATH, hours=hours)
+    return jsonify(data)
+
+
 @app.route("/api/snapshot/<path:agent_url>")
 @login_required
 def api_snapshot(agent_url):

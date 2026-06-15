@@ -174,6 +174,54 @@ def get_hourly_stats(db_path: str, agent_url: str, hours: int = 24) -> list[dict
     return [dict(row) for row in rows]
 
 
+def get_daily_stats_all(db_path: str, days: int = 7) -> list[dict]:
+    """Return aggregated daily stats across all agents for the last N days."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                date(ts)       AS day,
+                SUM(sent)      AS sent,
+                SUM(deferred)  AS deferred,
+                SUM(bounced)   AS bounced,
+                SUM(rejected)  AS rejected
+            FROM stats_snapshots
+            WHERE ts >= ?
+            GROUP BY date(ts)
+            ORDER BY day
+            """,
+            (cutoff,),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def get_hourly_stats_all(db_path: str, hours: int = 24) -> list[dict]:
+    """Return aggregated hourly stats across all agents for the last N hours."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                strftime('%Y-%m-%d %H', ts) AS hour,
+                SUM(sent)                   AS sent,
+                SUM(deferred)               AS deferred,
+                SUM(bounced)                AS bounced,
+                SUM(rejected)               AS rejected
+            FROM stats_snapshots
+            WHERE ts >= ?
+            GROUP BY strftime('%Y-%m-%d %H', ts)
+            ORDER BY hour
+            """,
+            (cutoff,),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
 def get_latest_snapshot(db_path: str, agent_url: str) -> dict | None:
     """Return the most recent snapshot for an agent, or None."""
     with _connect(db_path) as conn:

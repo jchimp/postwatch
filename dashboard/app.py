@@ -186,12 +186,14 @@ def api_add_agent():
     """Add a new agent. Expects JSON: {url, name?}"""
     data = request.get_json()
     url = data.get("url", "").strip()
-    name = data.get("name", "").strip()
+    name = (data.get("name") or "").strip()
 
+    if not name:
+        return jsonify({"error": "name is required"}), 400
     if not url:
         return jsonify({"error": "url is required"}), 400
 
-    success = models.add_agent(config.DB_PATH, url, name or None)
+    success = models.add_agent(config.DB_PATH, url, name)
     if not success:
         return jsonify({"error": "agent already exists"}), 400
 

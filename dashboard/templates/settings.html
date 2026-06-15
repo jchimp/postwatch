@@ -46,9 +46,9 @@
         <!-- Add Agent Form -->
         <div class="d-flex align-items-end gap-2 mb-3">
             <div class="flex-grow-1">
-                <label class="form-label small mb-1">Name (optional)</label>
+                <label class="form-label small mb-1">Name</label>
                 <input type="text" id="newAgentName" class="form-control form-control-sm"
-                       placeholder="mail-relay-1">
+                       placeholder="mail-relay-1" required>
             </div>
             <div class="flex-grow-1">
                 <label class="form-label small mb-1">Agent URL</label>
@@ -178,6 +178,10 @@ function addAgent() {
     const url = document.getElementById('newAgentUrl').value.trim();
     const name = document.getElementById('newAgentName').value.trim();
 
+    if (!name) {
+        showAlert('⚠ Name is required', 'warning');
+        return;
+    }
     if (!url) {
         showAlert('⚠ URL is required', 'warning');
         return;
@@ -186,7 +190,7 @@ function addAgent() {
     fetch('/api/agents', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({url, name: name || null})
+        body: JSON.stringify({url, name})
     })
         .then(r => r.json().then(data => ({status: r.status, data})))
         .then(({status, data}) => {

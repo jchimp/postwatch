@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title_suffix %} — Tokens{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">OAuth Token Health</h4>
+    <div class="d-flex align-items-center gap-2">
+        {% if agents|length > 1 %}
+        <select id="agentSelect" class="form-select form-select-sm" style="width:auto">
+            {% for a in agents %}
+            <option value="{{ a }}">{{ a }}</option>
+            {% endfor %}
+        </select>
+        {% else %}
+        <input type="hidden" id="agentSelect" value="{{ agents[0] if agents else '' }}">
+        {% endif %}
+        <button class="btn btn-sm btn-outline-secondary" onclick="fetchTokens()">⟳ Refresh</button>
+    </div>
+</div>
+
+<div id="tokenContainer">Loading…</div>
+<div id="thresholdInfo" class="text-muted small mt-3"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function getAgent() {
+    const el = document.getElementById('agentSelect');
+    return el ? el.value : '';
+}
+function enc(url) { return encodeURIComponent(url); }
+
+function formatAge(minutes) {
+    if (minutes == null) return 'N/A';
+    return minutes >= 60
+        ? (minutes / 60).toFixed(1) + ' hrs'
+        : minutes.toFixed(1) + ' min';
+}
+
+function formatRemaining(minutes) {
+    if (minutes == null) return 'N/A';
+    if (minutes <= 0) return 'Expired';
+    return minutes >= 60
+        ? (minutes / 60).toFixed(1) + ' hrs'
+        : minutes.toFixed(1) + ' min';
+}
+
+function badgeClass(status) {
+    const map = {
+        ok: 'badge-ok', expiring_soon: 'badge-warning',
+        stale: 'badge-stale', expired: 'badge-danger',
+    };
+    return map[status] || 'badge-ok';
+}
+
+function borderColor(status) {
+    const map = {
+        ok: 'var(--nord14)', expiring_soon: 'var(--nord13)',
+        stale: 'var(--nord12)', expired: 'var(--nord11)',
+    };
+    return map[status] || 'var(--nord3)';
+}
+
+function buildTokenCard(t) {
+    return `
+    <div class="card mb-3" style="border-left:4px solid ${borderColor(t.status)}">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <strong>${t.filename}</strong>
+                <span class="badge ${badgeClass(t.status)}">${t.status.replace('_',' ')}</span>
+            </div>
+            <table class="table table-sm table-dark mb-0">
+                <tr><td class="text-muted" style="width:180px">Path</td><td><code>${t.path}</code></td></tr>
+                <tr><td class="text-muted">Last Modified</td><td>${t.mtime_iso || 'N/A'}</td></tr>
+                <tr><td class="text-muted">Age</td><td>${formatAge(t.age_minutes)}</td></tr>
+                <tr><td class="text-muted">Expiry</td><td>${t.expiry_iso || 'N/A'}</td></tr>
+                <tr><td class="text-muted">Time Remaining</td><td>${formatRemaining(t.expiry_minutes_remaining)}</td></tr>
+            </table>
+        </div>
+    </div>`;
+}
+
+async function fetchTokens() {
+    const agent = getAgent();
+    if (!agent) return;
+    const container = document.getElementById('tokenContainer');
+    const info = document.getElementById('thresholdInfo');
+
+    try {
+        const r = await fetch(`/api/token-status/${enc(agent)}`);
+        const data = await r.json();
+
+        if (data.error) {
+            container.innerHTML = `<div class="alert alert-warning">${data.error}</div>`;
+            info.textContent = '';
+            return;
+        }
+
+        const tokens = data.tokens || [];
+        if (tokens.length === 0) {
+            container.innerHTML = '<div class="alert alert-info">No token files found in token directory.</div>';
+        } else {
+            container.innerHTML = tokens.map(buildTokenCard).join('');
+        }
+
+        const th = data.thresholds || {};
+        info.textContent = `Stale threshold: ${th.stale_minutes ?? '—'} min  |  Expiry warning: ${th.expiry_warn_minutes ?? '—'} min`;
+    } catch (err) {
+        container.innerHTML = `<div class="text-danger-nord">Error: ${err}</div>`;
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    fetchTokens();
+    const sel = document.getElementById('agentSelect');
+    if (sel && sel.tagName === 'SELECT') sel.addEventListener('change', fetchTokens);
+    setInterval(fetchTokens, 60_000);
+});
+</script>
+{% endblock %}

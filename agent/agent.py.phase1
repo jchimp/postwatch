@@ -1,0 +1,174 @@
+"""
+postwatch-agent — Phase 1
+Lightweight REST API for monitoring a Postfix mail server.
+Runs as root via systemd. Secured with a shared API key.
+"""
+
+import json
+import os
+import subprocess
+import time
+from datetime import datetime, timezone
+from functools import wraps
+
+from dotenv import load_dotenv
+from flask import Flask, Response, jsonify, request, stream_with_context
+
+load_dotenv()
+
+# ── Config ────────────────────────────────────────────────────────────────────
+API_KEY     = os.getenv("API_KEY", "changeme")
+SERVER_NAME = os.getenv("SERVER_NAME", "mail-server")
+LOG_FILE    = os.getenv("LOG_FILE", "/var/log/mail.log")
+HOST        = os.getenv("HOST", "0.0.0.0")
+PORT        = int(os.getenv("PORT", 5100))
+
+app = Flask(__name__)
+
+
+# ── Auth middleware ────────────────────────────────────────────────────────────
+def require_api_key(f):
+    """Decorator that checks the X-API-Key header on every request."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        key = request.headers.get("X-API-Key", "")
+        if key != API_KEY:
+            return jsonify({"error": "Unauthorized"}), 401
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def _run(cmd: list[str], timeout: int = 15) -> tuple[str, int]:
+    """Run a shell command and return (stdout+stderr, returncode)."""
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout
+        )
+        return result.stdout + result.stderr, result.returncode
+    except subprocess.TimeoutExpired:
+        return "Command timed out", -1
+    except Exception as exc:
+        return str(exc), -1
+
+
+def _utcnow() -> str:
+    """Return the current UTC time as an ISO-8601 string."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+# ── GET /health ───────────────────────────────────────────────────────────────
+@app.route("/health")
+def health():
+    """Public health check — no API key required."""
+    return jsonify({"status": "ok", "server_name": SERVER_NAME, "ts": _utcnow()})
+
+
+# ── GET /status ───────────────────────────────────────────────────────────────
+@app.route("/status")
+@require_api_key
+def status():
+    """Return the current state of the postfix service."""
+    active_out, active_rc = _run(["systemctl", "is-active", "postfix"])
+    status_out, _         = _run(["systemctl", "status", "postfix", "--no-pager", "-l"])
+
+    return jsonify({
+        "server_name": SERVER_NAME,
+        "active": active_rc == 0,
+        "active_text": active_out.strip(),
+        "status_text": status_out.strip(),
+        "ts": _utcnow(),
+    })
+
+
+# ── GET /queue ────────────────────────────────────────────────────────────────
+@app.route("/queue")
+@require_api_key
+def queue():
+    """Return the current Postfix mail queue."""
+    raw, rc = _run(["mailq"])
+
+    # mailq prints "Mail queue is empty" when there's nothing
+    if "is empty" in raw.lower():
+        count = 0
+    else:
+        # Each queued message starts with a queue ID line (hex + optional *)
+        count = sum(
+            1 for line in raw.splitlines()
+            if line and not line.startswith(" ")
+            and not line.startswith("-") and not line.startswith("Total")
+        )
+
+    return jsonify({
+        "server_name": SERVER_NAME,
+        "queue_count": count,
+        "raw": raw.strip(),
+        "ts": _utcnow(),
+    })
+
+
+# ── GET /logs ─────────────────────────────────────────────────────────────────
+@app.route("/logs")
+@require_api_key
+def logs():
+    """Return the last 200 lines of the mail log, with optional search filter."""
+    search = request.args.get("search", "").lower()
+
+    if not os.path.isfile(LOG_FILE):
+        return jsonify({"error": f"Log file not found: {LOG_FILE}"}), 404
+
+    # Use tail for efficiency — no need to read the entire file
+    raw, _ = _run(["tail", "-n", "200", LOG_FILE], timeout=5)
+    lines = raw.splitlines()
+
+    if search:
+        lines = [l for l in lines if search in l.lower()]
+
+    return jsonify({
+        "server_name": SERVER_NAME,
+        "log_file": LOG_FILE,
+        "count": len(lines),
+        "lines": lines,
+        "ts": _utcnow(),
+    })
+
+
+# ── GET /logs/stream (SSE) ───────────────────────────────────────────────────
+@app.route("/logs/stream")
+@require_api_key
+def logs_stream():
+    """Stream new log lines via Server-Sent Events (SSE)."""
+
+    def generate():
+        # tail -F follows through log rotation
+        proc = subprocess.Popen(
+            ["tail", "-F", "-n", "0", LOG_FILE],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
+        )
+        try:
+            while True:
+                line = proc.stdout.readline()
+                if line:
+                    payload = json.dumps({"line": line.rstrip(), "ts": _utcnow()})
+                    yield f"data: {payload}\n\n"
+                else:
+                    # Small sleep to avoid busy-waiting if pipe is empty
+                    time.sleep(0.1)
+        except GeneratorExit:
+            proc.terminate()
+            proc.wait()
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering if proxied
+        },
+    )
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+if __name__ == "__main__":
+    print(f"[postwatch-agent] {SERVER_NAME} listening on {HOST}:{PORT}")
+    app.run(host=HOST, port=PORT, threaded=True)

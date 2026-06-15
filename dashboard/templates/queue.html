@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+{% block title_suffix %} — Queue{% endblock %}
+
+{% block content %}
+<div id="alertArea"></div>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">Mail Queue</h4>
+    <div class="d-flex align-items-center gap-2">
+        {% if agents|length > 1 %}
+        <select id="agentSelect" class="form-select form-select-sm" style="width:auto">
+            {% for a in agents %}
+            <option value="{{ a }}">{{ a }}</option>
+            {% endfor %}
+        </select>
+        {% else %}
+        <input type="hidden" id="agentSelect" value="{{ agents[0] if agents else '' }}">
+        {% endif %}
+        <button class="btn btn-sm btn-outline-secondary" onclick="fetchQueue()">⟳ Refresh</button>
+        <button class="btn btn-sm btn-warning" data-bs-toggle="modal" data-bs-target="#confirmFlushModal">Flush Queue</button>
+        <button class="btn btn-sm btn-danger" data-bs-toggle="modal" data-bs-target="#confirmDeleteModal">Delete All</button>
+        <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#confirmRestartModal">Restart Postfix</button>
+        <span class="text-muted small" id="queueCount"></span>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">Queue Contents</div>
+    <div class="card-body p-0">
+        <pre class="log-container mb-0" id="queueOutput" style="white-space:pre-wrap">Loading…</pre>
+    </div>
+</div>
+
+<!-- ── Flush Modal ─────────────────────────────────────────────────────────── -->
+<div class="modal fade" id="confirmFlushModal" tabindex="-1">
+    <div class="modal-dialog"><div class="modal-content">
+        <div class="modal-header">
+            <h5 class="modal-title">Flush Queue</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+            Are you sure you want to <strong>flush the queue</strong>?
+            This will attempt immediate delivery of all deferred messages.
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button class="btn btn-sm btn-warning" onclick="doFlush()">Flush Queue</button>
+        </div>
+    </div></div>
+</div>
+
+<!-- ── Delete Modal ────────────────────────────────────────────────────────── -->
+<div class="modal fade" id="confirmDeleteModal" tabindex="-1">
+    <div class="modal-dialog"><div class="modal-content">
+        <div class="modal-header">
+            <h5 class="modal-title">⚠️ Delete All Messages</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+            Are you sure you want to <strong>DELETE ALL</strong> messages from the queue?<br>
+            <span class="text-danger-nord">This cannot be undone.</span>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button class="btn btn-sm btn-danger" onclick="doDelete()">Delete All</button>
+        </div>
+    </div></div>
+</div>
+
+<!-- ── Restart Modal ───────────────────────────────────────────────────────── -->
+<div class="modal fade" id="confirmRestartModal" tabindex="-1">
+    <div class="modal-dialog"><div class="modal-content">
+        <div class="modal-header">
+            <h5 class="modal-title">Restart Postfix</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+            Are you sure you want to <strong>restart</strong> the Postfix service?
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button class="btn btn-sm btn-primary" onclick="doRestart()">Restart</button>
+        </div>
+    </div></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function getAgent() {
+    const el = document.getElementById('agentSelect');
+    return el ? el.value : '';
+}
+function enc(url) { return encodeURIComponent(url); }
+
+function showAlert(message, type = 'success') {
+    const area = document.getElementById('alertArea');
+    const id = 'alert-' + Date.now();
+    area.innerHTML = `
+        <div id="${id}" class="alert alert-${type} alert-dismissible fade show" role="alert">
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>`;
+    setTimeout(() => {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+    }, 5000);
+}
+
+function closeModal(id) {
+    const modal = bootstrap.Modal.getInstance(document.getElementById(id));
+    if (modal) modal.hide();
+}
+
+async function fetchQueue() {
+    const agent = getAgent();
+    if (!agent) return;
+    try {
+        const r = await fetch(`/api/queue/${enc(agent)}`);
+        const data = await r.json();
+        document.getElementById('queueOutput').textContent = data.raw || 'Empty';
+        document.getElementById('queueCount').textContent =
+            `${data.queue_count ?? 0} message(s)`;
+    } catch (err) {
+        document.getElementById('queueOutput').textContent = 'Error: ' + err;
+    }
+}
+
+async function doFlush() {
+    const agent = getAgent();
+    closeModal('confirmFlushModal');
+    try {
+        const r = await fetch(`/api/queue/flush/${enc(agent)}`, { method: 'POST' });
+        const data = await r.json();
+        showAlert(data.message || 'Queue flushed', data.success ? 'success' : 'danger');
+    } catch (err) { showAlert('Error: ' + err, 'danger'); }
+    fetchQueue();
+}
+
+async function doDelete() {
+    const agent = getAgent();
+    closeModal('confirmDeleteModal');
+    try {
+        const r = await fetch(`/api/queue/delete/${enc(agent)}`, { method: 'POST' });
+        const data = await r.json();
+        showAlert(data.message || 'Queue deleted', data.success ? 'success' : 'danger');
+    } catch (err) { showAlert('Error: ' + err, 'danger'); }
+    fetchQueue();
+}
+
+async function doRestart() {
+    const agent = getAgent();
+    closeModal('confirmRestartModal');
+    try {
+        const r = await fetch(`/api/restart/${enc(agent)}`, { method: 'POST' });
+        const data = await r.json();
+        showAlert(data.message || 'Postfix restarted', data.success ? 'success' : 'danger');
+    } catch (err) { showAlert('Error: ' + err, 'danger'); }
+    fetchQueue();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    fetchQueue();
+    const sel = document.getElementById('agentSelect');
+    if (sel && sel.tagName === 'SELECT') sel.addEventListener('change', fetchQueue);
+    setInterval(fetchQueue, 30_000);
+});
+</script>
+{% endblock %}

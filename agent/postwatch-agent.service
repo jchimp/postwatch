@@ -1,0 +1,17 @@
+[Unit]
+Description=Postwatch Agent
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/postwatch-agent
+ExecStart=/opt/postwatch-agent/venv/bin/python3 /opt/postwatch-agent/agent.py
+EnvironmentFile=/opt/postwatch-agent/.env
+User=root
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

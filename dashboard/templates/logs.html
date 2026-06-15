@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title_suffix %} — Logs{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0">Mail Logs</h4>
+    <div class="d-flex align-items-center gap-2">
+        {% if agents|length > 1 %}
+        <select id="agentSelect" class="form-select form-select-sm" style="width:auto">
+            {% for a in agents %}
+            <option value="{{ a }}">{{ a }}</option>
+            {% endfor %}
+        </select>
+        {% else %}
+        <input type="hidden" id="agentSelect" value="{{ agents[0] if agents else '' }}">
+        {% endif %}
+        <input type="text" id="logSearch" class="form-control form-control-sm"
+               placeholder="Filter logs…" style="width:300px">
+        <button class="btn btn-sm btn-primary" onclick="fetchLogs()">Search</button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="fetchLogs()">⟳ Refresh</button>
+        <button class="btn btn-sm btn-success" id="liveToggle" onclick="toggleLive()">▶ Live</button>
+        <span class="text-muted small" id="lineCount"></span>
+    </div>
+</div>
+
+<div class="log-container" id="logContainer">Loading…</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let eventSource = null;
+let isLive = false;
+
+function getAgent() {
+    const el = document.getElementById('agentSelect');
+    return el ? el.value : '';
+}
+function enc(url) { return encodeURIComponent(url); }
+
+function isNearBottom(el) {
+    return el.scrollTop + el.clientHeight >= el.scrollHeight - 50;
+}
+
+function scrollBottom(el) {
+    el.scrollTop = el.scrollHeight;
+}
+
+function appendLogLine(container, text) {
+    const div = document.createElement('div');
+    div.className = 'log-line';
+    div.textContent = text;
+    container.appendChild(div);
+}
+
+async function fetchLogs() {
+    const agent = getAgent();
+    if (!agent) return;
+    const search = document.getElementById('logSearch').value;
+    const params = search ? `?search=${encodeURIComponent(search)}` : '';
+    const container = document.getElementById('logContainer');
+
+    try {
+        const r = await fetch(`/api/logs/${enc(agent)}${params}`);
+        const data = await r.json();
+        container.innerHTML = '';
+        (data.lines || []).forEach(line => appendLogLine(container, line));
+        document.getElementById('lineCount').textContent = `${data.count || 0} lines`;
+        scrollBottom(container);
+    } catch (err) {
+        container.innerHTML = `<div class="text-danger-nord">Error loading logs: ${err}</div>`;
+    }
+}
+
+function startStream() {
+    const agent = getAgent();
+    if (!agent) return;
+    stopStream();
+
+    const container = document.getElementById('logContainer');
+    const btn = document.getElementById('liveToggle');
+
+    eventSource = new EventSource(`/api/logs/stream/${enc(agent)}`);
+    eventSource.onmessage = (e) => {
+        try {
+            const data = JSON.parse(e.data);
+            const atBottom = isNearBottom(container);
+            appendLogLine(container, data.line);
+
+            // Keep a reasonable max (5000 lines) to avoid memory bloat
+            while (container.children.length > 5000) {
+                container.removeChild(container.firstChild);
+            }
+
+            if (atBottom) scrollBottom(container);
+        } catch {}
+    };
+    eventSource.onerror = () => {
+        btn.textContent = '▶ Live (error)';
+        btn.className = 'btn btn-sm btn-danger';
+    };
+
+    isLive = true;
+    btn.textContent = '⏸ Pause';
+    btn.className = 'btn btn-sm btn-warning';
+}
+
+function stopStream() {
+    if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+    }
+    isLive = false;
+    const btn = document.getElementById('liveToggle');
+    btn.textContent = '▶ Live';
+    btn.className = 'btn btn-sm btn-success';
+}
+
+function toggleLive() {
+    if (isLive) stopStream(); else startStream();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    fetchLogs();
+
+    const sel = document.getElementById('agentSelect');
+    if (sel && sel.tagName === 'SELECT') {
+        sel.addEventListener('change', () => { stopStream(); fetchLogs(); });
+    }
+
+    document.getElementById('logSearch').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') fetchLogs();
+    });
+});
+</script>
+{% endblock %}

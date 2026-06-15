@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  dashboard:
+    build: .
+    container_name: postwatch
+    restart: unless-stopped
+    ports:
+      - "5005:5000"
+    volumes:
+      - ./data:/app/data        # persist SQLite DB
+      - ./.env:/app/.env:ro     # config (read-only)
+    env_file:
+      - .env

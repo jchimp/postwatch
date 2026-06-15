@@ -7,7 +7,13 @@
       "Bash(xxd)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(find /c/Users/jchampion/Dropbox/Source/Python/postwatch -name \".env\" -not -path \"*/\\\\.*\")"
+      "Bash(find /c/Users/jchampion/Dropbox/Source/Python/postwatch -name \".env\" -not -path \"*/\\\\.*\")",
+      "Bash(python app.py)",
+      "Bash(echo \"Dashboard PID: $!\")",
+      "Bash(curl -s http://localhost:5000/login)",
+      "Bash(cat /tmp/dashboard.log 2>/dev/null | head -50)",
+      "Read(//tmp/**)",
+      "Bash(pip install *)"
     ]
   }
 }

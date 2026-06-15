@@ -11,6 +11,8 @@ A lightweight, two-component Postfix monitoring dashboard for tracking mail serv
 - **Queue management** — Flush, delete, or restart operations from the dashboard
 - **OAuth token health** — Track token age, expiry, and staleness
 - **Multi-server support** — Monitor multiple mail servers from one dashboard
+- **Aggregated views** — "All Hosts" mode to see combined stats across all servers
+- **Historical analytics** — 4 time-period charts: hourly, daily, weekly, monthly (single-agent and aggregate)
 - **Simple authentication** — Single admin user, plaintext credential check
 - **No dependencies bloat** — Flask, SQLite, Bootstrap CDN, Chart.js CDN only
 
@@ -413,12 +415,22 @@ Currently no tests. PRs welcome! 📝
 - **Minimal deps** — Prefer stdlib. No ORMs, no transpilation.
 - **Safe operations** — Queue/restart actions require UI confirmation modals
 
+## Documentation
+
+For detailed information, see:
+
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — System overview, data flows, database schema, and design patterns (with ASCII diagrams)
+- **[docs/API.md](docs/API.md)** — Complete API reference for agent and dashboard endpoints
+
 ## Directory Structure
 
 ```
 postwatch/
 ├── README.md                   # This file
-├── CLAUDE.md                   # Architecture notes
+├── CLAUDE.md                   # Developer notes
+├── docs/
+│   ├── ARCHITECTURE.md         # System design & data flows
+│   └── API.md                  # Complete API reference
 ├── agent/
 │   ├── agent.py                # REST API + log streaming
 │   ├── agent.py.phase1         # Phase 1 reference

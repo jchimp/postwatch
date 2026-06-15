@@ -27,17 +27,19 @@ echo "==> Installing postwatch-dashboard to ${INSTALL_DIR}"
 # Create install directory
 mkdir -p "${INSTALL_DIR}"
 
-# Copy application files
+# Copy application files (force overwrite)
 echo "==> Copying application files"
-cp app.py "${INSTALL_DIR}/app.py"
-cp config.py "${INSTALL_DIR}/config.py"
-cp models.py "${INSTALL_DIR}/models.py"
-cp poller.py "${INSTALL_DIR}/poller.py"
-cp requirements.txt "${INSTALL_DIR}/requirements.txt"
-cp Dockerfile "${INSTALL_DIR}/Dockerfile"
-cp docker-compose.yml "${INSTALL_DIR}/docker-compose.yml"
+cp -f app.py "${INSTALL_DIR}/app.py"
+cp -f config.py "${INSTALL_DIR}/config.py"
+cp -f models.py "${INSTALL_DIR}/models.py"
+cp -f poller.py "${INSTALL_DIR}/poller.py"
+cp -f requirements.txt "${INSTALL_DIR}/requirements.txt"
+cp -f Dockerfile "${INSTALL_DIR}/Dockerfile"
+cp -f docker-compose.yml "${INSTALL_DIR}/docker-compose.yml"
 
-# Copy directories
+# Copy directories (remove old, copy new to ensure clean state)
+rm -rf "${INSTALL_DIR}/templates"
+rm -rf "${INSTALL_DIR}/static"
 cp -r templates "${INSTALL_DIR}/templates"
 cp -r static "${INSTALL_DIR}/static"
 

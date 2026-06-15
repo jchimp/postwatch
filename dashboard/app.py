@@ -432,11 +432,67 @@ def api_chart_hourly(agent_url):
     return jsonify(data)
 
 
+@app.route("/api/chart/weekly/<path:agent_url>")
+@login_required
+def api_chart_weekly(agent_url):
+    weeks = request.args.get("weeks", 4, type=int)
+    data = models.get_weekly_stats(config.DB_PATH, agent_url, weeks=weeks)
+    return jsonify(data)
+
+
+@app.route("/api/chart/monthly/<path:agent_url>")
+@login_required
+def api_chart_monthly(agent_url):
+    months = request.args.get("months", 12, type=int)
+    data = models.get_monthly_stats(config.DB_PATH, agent_url, months=months)
+    return jsonify(data)
+
+
+@app.route("/api/chart/daily/all")
+@login_required
+def api_chart_daily_all():
+    days = request.args.get("days", 7, type=int)
+    data = models.get_daily_stats_all(config.DB_PATH, days=days)
+    return jsonify(data)
+
+
+@app.route("/api/chart/hourly/all")
+@login_required
+def api_chart_hourly_all():
+    hours = request.args.get("hours", 24, type=int)
+    data = models.get_hourly_stats_all(config.DB_PATH, hours=hours)
+    return jsonify(data)
+
+
+@app.route("/api/chart/weekly/all")
+@login_required
+def api_chart_weekly_all():
+    weeks = request.args.get("weeks", 4, type=int)
+    data = models.get_weekly_stats_all(config.DB_PATH, weeks=weeks)
+    return jsonify(data)
+
+
+@app.route("/api/chart/monthly/all")
+@login_required
+def api_chart_monthly_all():
+    months = request.args.get("months", 12, type=int)
+    data = models.get_monthly_stats_all(config.DB_PATH, months=months)
+    return jsonify(data)
+
+
 @app.route("/api/snapshot/<path:agent_url>")
 @login_required
 def api_snapshot(agent_url):
     snap = models.get_latest_snapshot(config.DB_PATH, agent_url)
     return jsonify(snap or {})
+
+
+@app.route("/api/totals/all")
+@login_required
+def api_totals_all():
+    """Return aggregated totals from latest snapshot of each agent."""
+    totals = models.get_latest_totals_all(config.DB_PATH)
+    return jsonify({"totals": totals})
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

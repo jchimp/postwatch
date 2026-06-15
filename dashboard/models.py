@@ -174,6 +174,150 @@ def get_hourly_stats(db_path: str, agent_url: str, hours: int = 24) -> list[dict
     return [dict(row) for row in rows]
 
 
+def get_weekly_stats(db_path: str, agent_url: str, weeks: int = 4) -> list[dict]:
+    """Return weekly aggregated stats for the last N weeks."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat()
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                strftime('%Y-W%W', ts)  AS week,
+                SUM(sent)               AS sent,
+                SUM(deferred)           AS deferred,
+                SUM(bounced)            AS bounced,
+                SUM(rejected)           AS rejected
+            FROM stats_snapshots
+            WHERE agent_url = ? AND ts >= ?
+            GROUP BY strftime('%Y-W%W', ts)
+            ORDER BY week
+            """,
+            (agent_url, cutoff),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def get_monthly_stats(db_path: str, agent_url: str, months: int = 12) -> list[dict]:
+    """Return monthly aggregated stats for the last N months."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=months*30)).isoformat()
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                strftime('%Y-%m', ts)   AS month,
+                SUM(sent)               AS sent,
+                SUM(deferred)           AS deferred,
+                SUM(bounced)            AS bounced,
+                SUM(rejected)           AS rejected
+            FROM stats_snapshots
+            WHERE agent_url = ? AND ts >= ?
+            GROUP BY strftime('%Y-%m', ts)
+            ORDER BY month
+            """,
+            (agent_url, cutoff),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def get_daily_stats_all(db_path: str, days: int = 7) -> list[dict]:
+    """Return aggregated daily stats across all agents for the last N days."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                date(ts)       AS day,
+                SUM(sent)      AS sent,
+                SUM(deferred)  AS deferred,
+                SUM(bounced)   AS bounced,
+                SUM(rejected)  AS rejected
+            FROM stats_snapshots
+            WHERE ts >= ?
+            GROUP BY date(ts)
+            ORDER BY day
+            """,
+            (cutoff,),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def get_hourly_stats_all(db_path: str, hours: int = 24) -> list[dict]:
+    """Return aggregated hourly stats across all agents for the last N hours."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                strftime('%Y-%m-%d %H', ts) AS hour,
+                SUM(sent)                   AS sent,
+                SUM(deferred)               AS deferred,
+                SUM(bounced)                AS bounced,
+                SUM(rejected)               AS rejected
+            FROM stats_snapshots
+            WHERE ts >= ?
+            GROUP BY strftime('%Y-%m-%d %H', ts)
+            ORDER BY hour
+            """,
+            (cutoff,),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def get_weekly_stats_all(db_path: str, weeks: int = 4) -> list[dict]:
+    """Return aggregated weekly stats across all agents for the last N weeks."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat()
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                strftime('%Y-W%W', ts)  AS week,
+                SUM(sent)               AS sent,
+                SUM(deferred)           AS deferred,
+                SUM(bounced)            AS bounced,
+                SUM(rejected)           AS rejected
+            FROM stats_snapshots
+            WHERE ts >= ?
+            GROUP BY strftime('%Y-W%W', ts)
+            ORDER BY week
+            """,
+            (cutoff,),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
+def get_monthly_stats_all(db_path: str, months: int = 12) -> list[dict]:
+    """Return aggregated monthly stats across all agents for the last N months."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=months*30)).isoformat()
+
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                strftime('%Y-%m', ts)   AS month,
+                SUM(sent)               AS sent,
+                SUM(deferred)           AS deferred,
+                SUM(bounced)            AS bounced,
+                SUM(rejected)           AS rejected
+            FROM stats_snapshots
+            WHERE ts >= ?
+            GROUP BY strftime('%Y-%m', ts)
+            ORDER BY month
+            """,
+            (cutoff,),
+        ).fetchall()
+
+    return [dict(row) for row in rows]
+
+
 def get_latest_snapshot(db_path: str, agent_url: str) -> dict | None:
     """Return the most recent snapshot for an agent, or None."""
     with _connect(db_path) as conn:
@@ -188,6 +332,35 @@ def get_latest_snapshot(db_path: str, agent_url: str) -> dict | None:
         ).fetchone()
 
     return dict(row) if row else None
+
+
+def get_latest_totals_all(db_path: str) -> dict:
+    """Return aggregated totals from the latest snapshot of each agent.
+
+    Uses the most recent snapshot per agent to avoid counting the same
+    running totals multiple times. Returns totals that match the agent logs.
+    """
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            """
+            SELECT
+                SUM(sent) AS sent,
+                SUM(deferred) AS deferred,
+                SUM(bounced) AS bounced,
+                SUM(rejected) AS rejected
+            FROM (
+                SELECT agent_url, sent, deferred, bounced, rejected
+                FROM stats_snapshots
+                WHERE (agent_url, ts) IN (
+                    SELECT agent_url, MAX(ts)
+                    FROM stats_snapshots
+                    GROUP BY agent_url
+                )
+            )
+            """,
+        ).fetchone()
+
+    return dict(row) if row else {"sent": 0, "deferred": 0, "bounced": 0, "rejected": 0}
 
 
 # ── Agent management ──────────────────────────────────────────────────────────

@@ -105,6 +105,37 @@ cd dashboard && docker compose up --build
 - Minimal deps — stdlib preferred. No ORMs, no webpack, no transpilation.
 - Queue/restart actions require confirmation modals in the UI.
 
+## Recent Changes
+
+### Multi-Host Aggregation ("All Hosts" View)
+- **Feature:** Overview page now includes "All Hosts" dropdown option when 2+ agents configured
+- **Stat cards:** Show aggregated totals from latest snapshot of each agent (using MAX, not SUM, to avoid double-counting)
+- **Endpoint:** `/api/totals/all` — sums latest snapshots from all agents
+- **Implementation:** `get_latest_totals_all()` in models.py
+
+### 4-Chart View (Hourly, Daily, Weekly, Monthly)
+- **Charts:** Overview page displays all 4 time-period charts for single-agent and "All Hosts" modes
+- **Daily:** Last 7 days (grouped by day)
+- **Hourly:** Last 24 hours (grouped by hour)
+- **Weekly:** Last 4 weeks (grouped by ISO week)
+- **Monthly:** Last 12 months (grouped by month)
+- **Endpoints:** `/api/chart/{daily|hourly|weekly|monthly}/{agent_url|all}`
+- **Functions:** `get_daily_stats()`, `get_hourly_stats()`, `get_weekly_stats()`, `get_monthly_stats()` for per-agent; `_all()` variants for aggregation
+
+### API Key Auth Error Handling
+- **Before:** Mismatched API key showed "Online · postfix down" (misleading)
+- **After:** Check response status code; show "Auth failed" (red) for 401, "Agent error" (yellow) for other errors
+- **File:** dashboard/templates/settings.html, `checkAgent()` function
+
+### Install Script Improvements
+- **Feature:** `install.sh` now force-overwrites all code files (`-f` flag) and recreates directories (`rm -rf`) to ensure clean upgrades
+- **Behavior:** Preserves .env and data/ directory for in-place upgrades
+- **Files:** dashboard/install.sh
+
+### Clipboard Copy Fallback
+- **Issue:** Clipboard API requires HTTPS; fallback to `execCommand` for HTTP (local dev)
+- **File:** dashboard/templates/settings.html, `copyApiKey()` + `copyFallback()`
+
 ## Not Yet Implemented
 
 - Tests / CI

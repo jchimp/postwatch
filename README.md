@@ -41,7 +41,7 @@ Agent (×N, systemd, root, :5100)  ←──REST/JSON──→  Dashboard (×1, 
 
 ## Quick Start
 
-### Option 1: Docker (Dashboard)
+### Option 1: Docker (Dashboard) — Local Dev
 
 ```bash
 cd dashboard
@@ -50,7 +50,7 @@ docker compose up --build
 
 Visit `http://localhost:5000` (default credentials: `admin` / `admin`)
 
-### Option 2: Local Development
+### Option 2: Local Development (No Docker)
 
 **Dashboard:**
 ```bash
@@ -65,6 +65,10 @@ cd agent
 pip install flask python-dotenv
 python agent.py
 ```
+
+### Option 3: Production Install (Systemd + Docker)
+
+See **Installation** section below for production deployment of agent and dashboard.
 
 ## Installation
 
@@ -114,28 +118,66 @@ The installer will:
 
 ### Dashboard Installation (Docker)
 
-1. Copy `.env.example` to `.env`:
-   ```bash
-   cd dashboard
-   cp .env.example .env
-   ```
+#### Option 1: Systemd Installation
 
-2. Edit `.env`:
+Requires: **Linux, root access, Docker, docker-compose**
+
+First, make the installer executable:
+```bash
+cd dashboard
+chmod +x install.sh
+```
+
+Then run it as root:
+```bash
+sudo ./install.sh
+```
+
+The installer will:
+- Create `/opt/postwatch-dashboard/` directory
+- Copy all application files (Flask app, templates, static assets)
+- Copy configuration template
+- Create `data/` directory for SQLite database
+- Set appropriate file permissions
+
+**After installation:**
+
+1. Edit the dashboard config:
    ```bash
-   nano .env
+   sudo nano /opt/postwatch-dashboard/.env
    ```
    - `SECRET_KEY` — Flask session secret (use a long random string)
    - `ADMIN_USER` / `ADMIN_PASS` — Login credentials
-   - `AGENT_API_KEY` — Must match each agent's API_KEY
-   - `AGENTS` — Comma-separated list of agent base URLs (e.g., `http://192.168.1.10:5100,http://192.168.1.11:5100`)
-   - `POLL_INTERVAL_SECONDS` — How often to poll agents for snapshots (default: 120)
+   - `AGENT_API_KEY` — Must match each agent's `API_KEY`
+   - `AGENTS` — Comma-separated list of agent URLs (e.g., `http://192.168.1.10:5100,http://192.168.1.11:5100`)
+   - `POLL_INTERVAL_SECONDS` — Poll interval in seconds (default: 120)
 
-3. Start:
+2. Start the dashboard:
    ```bash
-   docker compose up --build
+   cd /opt/postwatch-dashboard
+   docker-compose up --build -d
    ```
 
-4. Access at `http://localhost:5005` (port 5005 → 5000 inside container)
+3. Access at `http://localhost:5000` (or configure reverse proxy for external access)
+
+4. View logs:
+   ```bash
+   docker-compose logs -f
+   ```
+
+#### Option 2: Local Development
+
+For development without Docker:
+
+```bash
+cd dashboard
+cp .env.example .env
+nano .env  # Configure as needed
+pip install -r requirements.txt
+python app.py
+```
+
+Access at `http://localhost:5000`
 
 ## Configuration
 

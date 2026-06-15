@@ -180,11 +180,33 @@ function closeModal(id) {
 
 function copyApiKey() {
     const keyText = document.getElementById('apiKeyDisplay').textContent;
-    navigator.clipboard.writeText(keyText).then(() => {
-        showAlert('✓ Copied to clipboard');
-    }).catch(() => {
-        showAlert('✗ Failed to copy', 'danger');
-    });
+
+    // Try modern clipboard API first (requires HTTPS)
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(keyText).then(() => {
+            showAlert('Copied to clipboard');
+        }).catch(() => {
+            copyFallback(keyText);
+        });
+    } else {
+        copyFallback(keyText);
+    }
+}
+
+function copyFallback(text) {
+    const el = document.createElement('textarea');
+    el.value = text;
+    el.style.position = 'absolute';
+    el.style.left = '-9999px';
+    document.body.appendChild(el);
+    el.select();
+    try {
+        document.execCommand('copy');
+        showAlert('Copied to clipboard');
+    } catch (err) {
+        showAlert('Could not copy - try manual selection', 'warning');
+    }
+    document.body.removeChild(el);
 }
 
 function regenerateApiKey() {
@@ -261,13 +283,24 @@ async function checkAgent(btn) {
 
     // Reachable — check postfix state.
     try {
-        const st = await fetch(`/api/status/${a}`).then(r => r.json());
-        if (st.active) {
-            label.className = 'agent-health text-success-nord small';
-            label.innerHTML = '<i class="bi bi-check-circle"></i> Active';
+        const r = await fetch(`/api/status/${a}`);
+        if (!r.ok) {
+            if (r.status === 401) {
+                label.className = 'agent-health text-danger-nord small';
+                label.innerHTML = '<i class="bi bi-exclamation-circle"></i> Auth failed';
+            } else {
+                label.className = 'agent-health text-warning-nord small';
+                label.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Agent error';
+            }
         } else {
-            label.className = 'agent-health text-warning-nord small';
-            label.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Online · postfix down';
+            const st = await r.json();
+            if (st.active) {
+                label.className = 'agent-health text-success-nord small';
+                label.innerHTML = '<i class="bi bi-check-circle"></i> Active';
+            } else {
+                label.className = 'agent-health text-warning-nord small';
+                label.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Postfix down';
+            }
         }
     } catch {
         label.className = 'agent-health text-success-nord small';

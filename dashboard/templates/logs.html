@@ -3,22 +3,26 @@
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-3">
-    <h4 class="mb-0">Mail Logs</h4>
+    <h4 class="mb-0"><i class="bi bi-journal-text"></i> Mail Logs</h4>
     <div class="d-flex align-items-center gap-2">
         {% if agents|length > 1 %}
         <select id="agentSelect" class="form-select form-select-sm" style="width:auto">
             {% for a in agents %}
-            <option value="{{ a }}">{{ a }}</option>
+            <option value="{{ a.url }}">{{ a.display }}</option>
             {% endfor %}
         </select>
         {% else %}
-        <input type="hidden" id="agentSelect" value="{{ agents[0] if agents else '' }}">
+        <input type="hidden" id="agentSelect" value="{{ agents[0].url if agents else '' }}">
         {% endif %}
-        <input type="text" id="logSearch" class="form-control form-control-sm"
-               placeholder="Filter logs…" style="width:300px">
-        <button class="btn btn-sm btn-primary" onclick="fetchLogs()">Search</button>
-        <button class="btn btn-sm btn-outline-secondary" onclick="fetchLogs()">⟳ Refresh</button>
-        <button class="btn btn-sm btn-success" id="liveToggle" onclick="toggleLive()">▶ Live</button>
+        <div class="search-clear-wrap" style="width:300px">
+            <input type="text" id="logSearch" class="form-control form-control-sm"
+                   placeholder="Filter logs…">
+            <button type="button" class="search-clear-btn" onclick="clearLogSearch()"
+                    title="Clear search"><i class="bi bi-x-lg"></i></button>
+        </div>
+        <button class="btn btn-sm btn-primary" onclick="fetchLogs()"><i class="bi bi-search"></i> Search</button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="fetchLogs()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+        <button class="btn btn-sm btn-success" id="liveToggle" onclick="toggleLive()"><i class="bi bi-play-fill"></i> Live</button>
         <span class="text-muted small" id="lineCount"></span>
     </div>
 </div>
@@ -45,11 +49,88 @@ function scrollBottom(el) {
     el.scrollTop = el.scrollHeight;
 }
 
+function currentFilter() {
+    return document.getElementById('logSearch').value.trim().toLowerCase();
+}
+
 function appendLogLine(container, text) {
     const div = document.createElement('div');
     div.className = 'log-line';
-    div.textContent = text;
+
+    const span = document.createElement('span');
+    span.className = 'log-line-text';
+    span.textContent = text;
+    div.appendChild(span);
+
+    const btn = document.createElement('button');
+    btn.className = 'log-copy-btn';
+    btn.title = 'Copy line';
+    btn.innerHTML = '<i class="bi bi-clipboard"></i>';
+    btn.addEventListener('click', () => copyLogLine(text, btn));
+    div.appendChild(btn);
+
+    // Honor the active instant filter for newly added (e.g. streamed) lines.
+    const q = currentFilter();
+    if (q) {
+        if (text.toLowerCase().includes(q)) highlightLine(span, text, q);
+        else div.style.display = 'none';
+    }
+
     container.appendChild(div);
+}
+
+// Wrap each case-insensitive occurrence of `q` in a <mark>. Uses text nodes
+// only, so raw log content can never inject HTML.
+function highlightLine(span, text, q) {
+    span.textContent = '';
+    if (!q) { span.textContent = text; return; }
+    const lower = text.toLowerCase();
+    let i = 0, idx;
+    while ((idx = lower.indexOf(q, i)) !== -1) {
+        if (idx > i) span.appendChild(document.createTextNode(text.slice(i, idx)));
+        const mark = document.createElement('mark');
+        mark.className = 'log-hl';
+        mark.textContent = text.slice(idx, idx + q.length);
+        span.appendChild(mark);
+        i = idx + q.length;
+    }
+    if (i < text.length) span.appendChild(document.createTextNode(text.slice(i)));
+}
+
+// Instant client-side filter over the lines already loaded in the viewer.
+function applyLogFilter() {
+    const q = currentFilter();
+    const container = document.getElementById('logContainer');
+    const lines = container.querySelectorAll('.log-line');
+    let visible = 0;
+    lines.forEach(line => {
+        const span = line.querySelector('.log-line-text');
+        // textContent returns the original line even after earlier highlighting.
+        const text = span ? span.textContent : (line.textContent || '');
+        const match = !q || text.toLowerCase().includes(q);
+        line.style.display = match ? '' : 'none';
+        if (span) highlightLine(span, text, match ? q : '');
+        if (match) visible++;
+    });
+    document.getElementById('lineCount').textContent = `${visible} lines`;
+}
+
+function copyLogLine(text, btn) {
+    const reset = () => { btn.innerHTML = '<i class="bi bi-clipboard"></i>'; };
+    navigator.clipboard.writeText(text).then(() => {
+        btn.innerHTML = '<i class="bi bi-check-lg"></i>';
+        setTimeout(reset, 1000);
+    }).catch(() => {
+        btn.innerHTML = '<i class="bi bi-x-lg"></i>';
+        setTimeout(reset, 1000);
+    });
+}
+
+function clearLogSearch() {
+    const input = document.getElementById('logSearch');
+    input.value = '';
+    input.focus();
+    applyLogFilter();
 }
 
 async function fetchLogs() {
@@ -64,7 +145,7 @@ async function fetchLogs() {
         const data = await r.json();
         container.innerHTML = '';
         (data.lines || []).forEach(line => appendLogLine(container, line));
-        document.getElementById('lineCount').textContent = `${data.count || 0} lines`;
+        applyLogFilter();
         scrollBottom(container);
     } catch (err) {
         container.innerHTML = `<div class="text-danger-nord">Error loading logs: ${err}</div>`;
@@ -95,12 +176,12 @@ function startStream() {
         } catch {}
     };
     eventSource.onerror = () => {
-        btn.textContent = '▶ Live (error)';
+        btn.innerHTML = '<i class="bi bi-play-fill"></i> Live (error)';
         btn.className = 'btn btn-sm btn-danger';
     };
 
     isLive = true;
-    btn.textContent = '⏸ Pause';
+    btn.innerHTML = '<i class="bi bi-pause-fill"></i> Pause';
     btn.className = 'btn btn-sm btn-warning';
 }
 
@@ -111,7 +192,7 @@ function stopStream() {
     }
     isLive = false;
     const btn = document.getElementById('liveToggle');
-    btn.textContent = '▶ Live';
+    btn.innerHTML = '<i class="bi bi-play-fill"></i> Live';
     btn.className = 'btn btn-sm btn-success';
 }
 
@@ -122,12 +203,13 @@ function toggleLive() {
 document.addEventListener('DOMContentLoaded', () => {
     fetchLogs();
 
-    const sel = document.getElementById('agentSelect');
-    if (sel && sel.tagName === 'SELECT') {
-        sel.addEventListener('change', () => { stopStream(); fetchLogs(); });
-    }
+    setupAgentSelectHandler(async () => { stopStream(); await fetchLogs(); });
 
-    document.getElementById('logSearch').addEventListener('keydown', (e) => {
+    const searchInput = document.getElementById('logSearch');
+    // Instant client-side filter of loaded lines as you type.
+    searchInput.addEventListener('input', applyLogFilter);
+    // Enter runs a deeper server-side search across the full log.
+    searchInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') fetchLogs();
     });
 });

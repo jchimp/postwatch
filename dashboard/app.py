@@ -5,6 +5,8 @@ Main Flask application: auth, proxy routes to agents, polled stats API.
 
 import json
 from functools import wraps
+import secrets
+from urllib.parse import urlparse
 
 import requests as http_requests
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -23,6 +25,19 @@ app.secret_key = config.SECRET_KEY
 
 # Initialize database
 models.init_db(config.DB_PATH)
+
+# Migrate agents from .env to database (one-time at startup)
+def _migrate_agents_from_config():
+    """On startup, migrate any agents from .env to database if not already present."""
+    existing_agents = models.get_agents(config.DB_PATH)
+    existing_urls = {agent["url"] for agent in existing_agents}
+
+    for env_url in config.AGENTS:
+        if env_url not in existing_urls:
+            models.add_agent(config.DB_PATH, env_url, env_url)
+            print(f"[app] Migrated agent from .env to database: {env_url}")
+
+_migrate_agents_from_config()
 
 # Background poller
 scheduler = BackgroundScheduler(daemon=True)
@@ -55,7 +70,34 @@ def login_required(f):
 
 def _agent_headers() -> dict:
     """Standard headers for agent API calls."""
-    return {"X-API-Key": config.AGENT_API_KEY}
+    return {"X-API-Key": _get_api_key()}
+
+
+def _agent_display(agent: dict) -> str:
+    """Label for an agent dropdown: its name, or the host/IP if no real name is set.
+
+    `add_agent` stores the URL as the name when none is given, so treat a name
+    equal to the URL (or blank) as "no name" and fall back to the URL host.
+    """
+    name = (agent.get("name") or "").strip()
+    url = agent.get("url", "")
+    if name and name != url:
+        return name
+    return urlparse(url).hostname or url
+
+
+def _get_agents() -> list[dict]:
+    """Get agent URLs and names from database only (post-migration from .env)."""
+    agents = models.get_agents(config.DB_PATH)
+    for agent in agents:
+        agent["display"] = _agent_display(agent)
+    return agents
+
+
+def _get_api_key() -> str:
+    """Get API key: from database if set, otherwise from .env."""
+    db_key = models.get_setting(config.DB_PATH, "AGENT_API_KEY")
+    return db_key if db_key else config.AGENT_API_KEY
 
 
 # ── Login / Logout ────────────────────────────────────────────────────────────
@@ -91,25 +133,35 @@ def index():
 @app.route("/overview")
 @login_required
 def overview():
-    return render_template("overview.html", agents=config.AGENTS)
+    agents = _get_agents()
+    for agent in agents:
+        agent["snapshot"] = models.get_latest_snapshot(config.DB_PATH, agent["url"]) or {}
+    return render_template("overview.html", agents=agents)
 
 
 @app.route("/logs")
 @login_required
 def logs_page():
-    return render_template("logs.html", agents=config.AGENTS)
+    return render_template("logs.html", agents=_get_agents())
 
 
 @app.route("/queue")
 @login_required
 def queue_page():
-    return render_template("queue.html", agents=config.AGENTS)
+    return render_template("queue.html", agents=_get_agents())
 
 
 @app.route("/tokens")
 @login_required
 def tokens_page():
-    return render_template("tokens.html", agents=config.AGENTS)
+    return render_template("tokens.html", agents=_get_agents())
+
+
+@app.route("/settings")
+@login_required
+def settings():
+    api_key = _get_api_key()
+    return render_template("settings.html", agents=_get_agents(), api_key=api_key)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -119,11 +171,75 @@ def tokens_page():
 @app.route("/api/agents")
 @login_required
 def api_agents():
-    """Return the list of configured agent URLs."""
-    return jsonify(config.AGENTS)
+    """Return the configured agents (url + display label) from the database."""
+    agents = _get_agents()
+    return jsonify([
+        {"url": agent["url"], "display": agent["display"]} for agent in agents
+    ])
+
+
+# ── Settings management ───────────────────────────────────────────────────────
+
+@app.route("/api/agents", methods=["POST"])
+@login_required
+def api_add_agent():
+    """Add a new agent. Expects JSON: {url, name?}"""
+    data = request.get_json()
+    url = data.get("url", "").strip()
+    name = (data.get("name") or "").strip()
+
+    if not name:
+        return jsonify({"error": "name is required"}), 400
+    if not url:
+        return jsonify({"error": "url is required"}), 400
+
+    success = models.add_agent(config.DB_PATH, url, name)
+    if not success:
+        return jsonify({"error": "agent already exists"}), 400
+
+    return jsonify({"success": True, "url": url}), 201
+
+
+@app.route("/api/agents/<int:agent_id>", methods=["DELETE"])
+@login_required
+def api_remove_agent(agent_id):
+    """Remove an agent by ID."""
+    success = models.remove_agent(config.DB_PATH, agent_id)
+    if not success:
+        return jsonify({"error": "agent not found"}), 404
+
+    return jsonify({"success": True}), 200
+
+
+@app.route("/api/settings/api-key", methods=["GET"])
+@login_required
+def api_get_api_key():
+    """Get the current API key."""
+    api_key = _get_api_key()
+    return jsonify({"api_key": api_key}), 200
+
+
+@app.route("/api/settings/api-key", methods=["POST"])
+@login_required
+def api_regenerate_api_key():
+    """Generate and save a new API key."""
+    new_key = secrets.token_urlsafe(32)
+    models.set_setting(config.DB_PATH, "AGENT_API_KEY", new_key)
+    return jsonify({"api_key": new_key}), 200
 
 
 # ── Live proxy: GET endpoints ─────────────────────────────────────────────────
+
+@app.route("/api/health/<path:agent_url>")
+@login_required
+def api_health(agent_url):
+    """Lightweight reachability check (agent /health needs no API key)."""
+    try:
+        r = http_requests.get(f"{agent_url}/health", timeout=5)
+        return jsonify(r.json()), r.status_code
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 502
+
 
 @app.route("/api/status/<path:agent_url>")
 @login_required

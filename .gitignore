@@ -9,15 +9,16 @@ NOTES.md
 *.bak*
 *.old*
 *.backup*
+*.orig*
 
 #=== Data ===
 data/
 
 #=== Env / Secrets ===
 .env
-.env.*
 *.key
 *.pem
+!.env.example
 
 #=== Docs / Build output ===
 docs/_build/

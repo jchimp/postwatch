@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+
+{% block title_suffix %} — Settings{% endblock %}
+
+{% block head_extra %}
+<style>
+    .api-key-display {
+        font-family: monospace;
+        font-size: 0.95rem;
+        word-break: break-all;
+        padding: 0.5rem 0;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="alertArea"></div>
+
+<!-- ── API Key Section ──────────────────────────────────────────────────────── -->
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0"><i class="bi bi-key"></i> Agent API Key</h4>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <p class="text-muted small mb-2">This key must match the <code>AGENT_API_KEY</code> in each agent's <code>.env</code> file.</p>
+        <div class="d-flex justify-content-between align-items-center gap-2">
+            <div class="api-key-display flex-grow-1" id="apiKeyDisplay">{{ api_key }}</div>
+            <div class="d-flex align-items-center gap-2 flex-shrink-0">
+                <button class="btn btn-sm btn-outline-secondary" onclick="copyApiKey()"><i class="bi bi-clipboard"></i> Copy</button>
+                <button class="btn btn-sm btn-warning" onclick="regenerateApiKey()"><i class="bi bi-arrow-clockwise"></i> Regenerate</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ── Agents Section ────────────────────────────────────────────────────────── -->
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h4 class="mb-0"><i class="bi bi-broadcast"></i> Configured Agents</h4>
+</div>
+
+<div class="card mb-4">
+    <div class="card-body">
+        <p class="text-muted small mb-3">Manage agent URLs here. Changes take effect on the next poll cycle.</p>
+
+        <!-- Add Agent Form -->
+        <div class="d-flex align-items-end gap-2 mb-3">
+            <div class="flex-grow-1">
+                <label class="form-label small mb-1">Name</label>
+                <input type="text" id="newAgentName" class="form-control form-control-sm"
+                       placeholder="mail-relay-1" required>
+            </div>
+            <div class="flex-grow-1">
+                <label class="form-label small mb-1">Agent URL</label>
+                <input type="url" id="newAgentUrl" class="form-control form-control-sm"
+                       placeholder="http://192.168.1.10:5100" required>
+            </div>
+            <button class="btn btn-sm btn-primary" onclick="addAgent()">Add Agent</button>
+        </div>
+
+        <!-- Agents Table -->
+        <table class="table table-sm table-dark mb-0">
+            <thead>
+                <tr>
+                    <th style="width: 22%">Name</th>
+                    <th style="width: 48%">Agent URL</th>
+                    <th style="width: 15%">Health</th>
+                    <th style="width: 15%; text-align: center;">Action</th>
+                </tr>
+            </thead>
+            <tbody id="agentsTableBody">
+                {% if agents %}
+                    {% for agent in agents %}
+                    <tr data-agent-id="{{ agent.id }}" data-agent-url="{{ agent.url }}">
+                        <td>{{ agent.display }}</td>
+                        <td class="font-monospace text-break" style="font-size: 0.9rem;">{{ agent.url }}</td>
+                        <td><span class="agent-health text-muted small">—</span></td>
+                        <td style="text-align: center; white-space: nowrap;">
+                            <button class="btn btn-sm btn-outline-secondary"
+                                    onclick="checkAgent(this)" title="Run health check">
+                                <i class="bi bi-check-circle"></i> Check
+                            </button>
+                            <button class="btn btn-sm btn-outline-danger"
+                                    onclick="deleteAgent({{ agent.id }})">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="4" class="text-center text-muted small">
+                            No agents configured. Add one to get started.
+                        </td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteAgentModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title">Remove Agent</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure? This will stop monitoring this agent.</p>
+                <p class="text-muted small">Agent URL: <code id="deleteAgentUrl"></code></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-dismiss="modal">
+                    Cancel
+                </button>
+                <button type="button" class="btn btn-sm btn-danger" id="confirmDeleteBtn"
+                        onclick="confirmDelete()">
+                    Remove
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let deleteAgentId = null;
+
+function showAlert(message, type = 'success') {
+    const area = document.getElementById('alertArea');
+    const id = 'alert-' + Date.now();
+    area.innerHTML = `
+        <div id="${id}" class="alert alert-${type} alert-dismissible fade show" role="alert">
+            ${message}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>`;
+    setTimeout(() => {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+    }, 5000);
+}
+
+function closeModal(id) {
+    const modal = bootstrap.Modal.getInstance(document.getElementById(id));
+    if (modal) modal.hide();
+}
+
+function copyApiKey() {
+    const keyText = document.getElementById('apiKeyDisplay').textContent;
+    navigator.clipboard.writeText(keyText).then(() => {
+        showAlert('✓ Copied to clipboard');
+    }).catch(() => {
+        showAlert('✗ Failed to copy', 'danger');
+    });
+}
+
+function regenerateApiKey() {
+    if (!confirm('Regenerate API key? All agents must be updated with the new key.')) {
+        return;
+    }
+
+    fetch('/api/settings/api-key', {method: 'POST'})
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('apiKeyDisplay').textContent = data.api_key;
+            showAlert('✓ New API key generated. Update your agents!');
+        })
+        .catch(err => {
+            showAlert('✗ Failed: ' + err, 'danger');
+        });
+}
+
+function addAgent() {
+    const url = document.getElementById('newAgentUrl').value.trim();
+    const name = document.getElementById('newAgentName').value.trim();
+
+    if (!name) {
+        showAlert('⚠ Name is required', 'warning');
+        return;
+    }
+    if (!url) {
+        showAlert('⚠ URL is required', 'warning');
+        return;
+    }
+
+    fetch('/api/agents', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url, name})
+    })
+        .then(r => r.json().then(data => ({status: r.status, data})))
+        .then(({status, data}) => {
+            if (status === 201) {
+                document.getElementById('newAgentUrl').value = '';
+                document.getElementById('newAgentName').value = '';
+                showAlert('✓ Agent added');
+                loadAgents();
+            } else {
+                showAlert('✗ ' + (data.error || 'Failed to add agent'), 'danger');
+            }
+        })
+        .catch(err => {
+            showAlert('✗ Error: ' + err, 'danger');
+        });
+}
+
+async function checkAgent(btn) {
+    const row = btn.closest('tr');
+    const url = row.dataset.agentUrl;
+    const a = encodeURIComponent(url);
+    const label = row.querySelector('.agent-health');
+
+    btn.disabled = true;
+    label.className = 'agent-health text-muted small';
+    label.textContent = 'Checking…';
+
+    // Reachability first; if that fails, don't bother with status.
+    try {
+        await fetch(`/api/health/${a}`).then(r => {
+            if (!r.ok) throw new Error();
+        });
+    } catch {
+        label.className = 'agent-health text-danger-nord small';
+        label.innerHTML = '<i class="bi bi-x-circle"></i> Unreachable';
+        btn.disabled = false;
+        return;
+    }
+
+    // Reachable — check postfix state.
+    try {
+        const st = await fetch(`/api/status/${a}`).then(r => r.json());
+        if (st.active) {
+            label.className = 'agent-health text-success-nord small';
+            label.innerHTML = '<i class="bi bi-check-circle"></i> Active';
+        } else {
+            label.className = 'agent-health text-warning-nord small';
+            label.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Online · postfix down';
+        }
+    } catch {
+        label.className = 'agent-health text-success-nord small';
+        label.innerHTML = '<i class="bi bi-check-circle"></i> Online';
+    }
+
+    btn.disabled = false;
+}
+
+function deleteAgent(id) {
+    const row = document.querySelector(`tr[data-agent-id="${id}"]`);
+    const url = row.dataset.agentUrl;
+    document.getElementById('deleteAgentUrl').textContent = url;
+    deleteAgentId = id;
+    new bootstrap.Modal(document.getElementById('deleteAgentModal')).show();
+}
+
+function confirmDelete() {
+    if (!deleteAgentId) return;
+
+    fetch(`/api/agents/${deleteAgentId}`, {method: 'DELETE'})
+        .then(r => {
+            if (r.ok) {
+                closeModal('deleteAgentModal');
+                showAlert('✓ Agent removed');
+                loadAgents();
+            } else {
+                showAlert('✗ Failed to delete agent', 'danger');
+            }
+        })
+        .catch(err => showAlert('✗ Error: ' + err, 'danger'));
+}
+
+function loadAgents() {
+    fetch('/api/agents')
+        .then(r => r.json())
+        .then(agents => {
+            // Reload page to reflect changes from DB
+            location.reload();
+        })
+        .catch(err => console.error('Error loading agents:', err));
+}
+</script>
+{% endblock %}

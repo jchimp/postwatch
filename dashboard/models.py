@@ -39,6 +39,22 @@ def init_db(db_path: str) -> None:
             CREATE INDEX IF NOT EXISTS idx_snapshots_agent_ts
             ON stats_snapshots (agent_url, ts)
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS agents (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                url       TEXT    NOT NULL UNIQUE,
+                name      TEXT,
+                created   TEXT    NOT NULL,
+                updated   TEXT    NOT NULL
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key       TEXT    PRIMARY KEY,
+                value     TEXT    NOT NULL,
+                updated   TEXT    NOT NULL
+            )
+        """)
         conn.commit()
 
 
@@ -142,3 +158,56 @@ def get_latest_snapshot(db_path: str, agent_url: str) -> dict | None:
         ).fetchone()
 
     return dict(row) if row else None
+
+
+# ── Agent management ──────────────────────────────────────────────────────────
+
+def get_agents(db_path: str) -> list[dict]:
+    """Return all agents from the database."""
+    with _connect(db_path) as conn:
+        rows = conn.execute("SELECT id, url, name FROM agents ORDER BY created").fetchall()
+    return [dict(row) for row in rows]
+
+
+def add_agent(db_path: str, url: str, name: str = None) -> bool:
+    """Add a new agent URL. Returns True on success, False if already exists."""
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with _connect(db_path) as conn:
+            conn.execute(
+                "INSERT INTO agents (url, name, created, updated) VALUES (?, ?, ?, ?)",
+                (url, name or url, now, now),
+            )
+            conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
+def remove_agent(db_path: str, agent_id: int) -> bool:
+    """Remove an agent by ID. Returns True if found and deleted, False otherwise."""
+    with _connect(db_path) as conn:
+        cursor = conn.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def get_setting(db_path: str, key: str) -> str | None:
+    """Get a setting value, or None if not found."""
+    with _connect(db_path) as conn:
+        row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else None
+
+
+def set_setting(db_path: str, key: str, value: str) -> None:
+    """Set or update a setting value."""
+    now = datetime.now(timezone.utc).isoformat()
+    with _connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO settings (key, value, updated) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value = ?, updated = ?
+            """,
+            (key, value, now, value, now),
+        )
+        conn.commit()

@@ -156,28 +156,34 @@ TOKEN_EXPIRY_WARN_MINUTES=10
 
 ### Dashboard (.env)
 
+These settings are loaded at startup. Some can be changed later via the **Settings** page:
+
 ```env
-# Flask session secret
+# Flask session secret — NOT configurable via UI
 SECRET_KEY=change-me-to-a-long-random-string
 
-# Admin login
+# Admin login credentials — NOT configurable via UI
 ADMIN_USER=admin
 ADMIN_PASS=admin
 
-# Agent communication
+# Initial Agent API key (CAN be changed via Settings → Regenerate)
 AGENT_API_KEY=changeme-use-a-long-random-string
+
+# Initial agent URLs (CAN be managed via Settings → Add/Remove agents)
 AGENTS=http://192.168.1.10:5100,http://192.168.1.11:5100
 
-# Polling interval (seconds)
+# Polling interval — NOT configurable via UI (seconds)
 POLL_INTERVAL_SECONDS=120
 
-# Database
+# Database path — NOT configurable via UI
 DB_PATH=data/postwatch.db
 
-# Bind
+# Server bind address and port — NOT configurable via UI
 HOST=0.0.0.0
 PORT=5000
 ```
+
+**Note:** `SECRET_KEY`, `ADMIN_USER`, `ADMIN_PASS`, `POLL_INTERVAL_SECONDS`, `DB_PATH`, `HOST`, and `PORT` are **not changeable** via the Settings page — they're Flask-level configuration that would require a restart. Only `AGENT_API_KEY` and agent URLs are runtime-configurable via the Settings UI.
 
 ## API Endpoints (Agent)
 
@@ -206,6 +212,60 @@ PORT=5000
 | **Logs** | Log viewer + live streaming + search |
 | **Queue** | Queue depth + message count + flush/delete modals |
 | **Tokens** | OAuth token health (age, expiry, staleness) |
+| **Settings** | Manage agents, regenerate API key |
+
+## Configuration Management
+
+The dashboard supports **two configuration methods**:
+
+1. **Environment variables (`.env`)** — Initial setup only, loaded at startup
+2. **Database (SQLite)** — Runtime management via **Settings** page, persists across restarts
+
+### Configuration Priority
+
+- If agents or API key are stored in the database, they take precedence over `.env`
+- If the database is empty, the dashboard falls back to `.env` for agents and API key
+- Start with `.env` and optionally migrate to database-backed config via the **Settings** page
+
+### Using the Settings Page
+
+After logging in, click **⚙️ Settings** in the navbar to:
+
+- **Display the current API key** used by all agents
+- **Regenerate the API key** — generates a new cryptographically secure random key
+  - ⚠️ After regenerating, update all agents' `.env` files with the new key
+  - The dashboard will use the new key on the next poll cycle
+- **View all configured agents** in a table
+- **Add agents** — enter agent URL and optional friendly name
+  - Format: `http://192.168.1.10:5100`
+  - Optional name: `mail-relay-1`
+- **Remove agents** — delete from monitoring (requires confirmation)
+
+### Agent Storage
+
+When you add/remove agents via the Settings page, they're persisted in the SQLite `agents` table:
+
+```sql
+CREATE TABLE agents (
+    id        INTEGER PRIMARY KEY,
+    url       TEXT NOT NULL UNIQUE,
+    name      TEXT,
+    created   TEXT NOT NULL,
+    updated   TEXT NOT NULL
+)
+```
+
+Settings (like the API key) are stored in the `settings` table:
+
+```sql
+CREATE TABLE settings (
+    key       TEXT PRIMARY KEY,
+    value     TEXT NOT NULL,
+    updated   TEXT NOT NULL
+)
+```
+
+The poller and all dashboard routes automatically use database-backed config if available.
 
 ## Key Patterns
 

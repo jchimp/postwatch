@@ -10,13 +10,21 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# Check for Python 3
+if ! command -v python3 &> /dev/null; then
+    echo "ERROR: Python 3 is not installed." >&2
+    exit 1
+fi
+
 echo "==> Installing postwatch-agent to ${INSTALL_DIR}"
 
 # Create install directory
 mkdir -p "${INSTALL_DIR}"
 
 # Copy application files
+echo "==> Copying application files"
 cp agent.py "${INSTALL_DIR}/agent.py"
+cp postwatch-agent.service "${INSTALL_DIR}/postwatch-agent.service"
 
 # Only copy .env if it doesn't already exist (don't overwrite config)
 if [[ ! -f "${INSTALL_DIR}/.env" ]]; then
@@ -48,6 +56,16 @@ if command -v ufw &> /dev/null; then
 else
     echo "    WARNING: UFW not found or not installed"
 fi
+
+# Set proper permissions
+echo "==> Setting permissions"
+chmod 755 "${INSTALL_DIR}"
+chmod 755 "${INSTALL_DIR}/venv"
+chmod 644 "${INSTALL_DIR}/agent.py"
+chmod 644 "${INSTALL_DIR}/.env"
+chmod 644 "${INSTALL_DIR}/postwatch-agent.service"
+find "${INSTALL_DIR}/venv" -type d -exec chmod 755 {} +
+find "${INSTALL_DIR}/venv" -type f -exec chmod 644 {} +
 
 echo ""
 echo "════════════════════════════════════════════════════════════════"

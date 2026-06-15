@@ -127,21 +127,35 @@ def save_snapshot(
 
 
 def get_daily_stats(db_path: str, agent_url: str, days: int = 7) -> list[dict]:
-    """Return daily aggregated stats for the last N days."""
+    """Return daily aggregated stats for the last N days (per-day deltas)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
             SELECT
-                date(ts)       AS day,
-                SUM(sent)      AS sent,
-                SUM(deferred)  AS deferred,
-                SUM(bounced)   AS bounced,
-                SUM(rejected)  AS rejected
-            FROM stats_snapshots
-            WHERE agent_url = ? AND ts >= ?
-            GROUP BY date(ts)
+                day,
+                MAX(CASE WHEN rn = 1 THEN sent_delta ELSE 0 END) AS sent,
+                MAX(CASE WHEN rn = 1 THEN deferred_delta ELSE 0 END) AS deferred,
+                MAX(CASE WHEN rn = 1 THEN bounced_delta ELSE 0 END) AS bounced,
+                MAX(CASE WHEN rn = 1 THEN rejected_delta ELSE 0 END) AS rejected
+            FROM (
+                SELECT
+                    date(ts)                                    AS day,
+                    LAST_VALUE(sent)      OVER w - FIRST_VALUE(sent)      OVER w  AS sent_delta,
+                    LAST_VALUE(deferred)  OVER w - FIRST_VALUE(deferred)  OVER w  AS deferred_delta,
+                    LAST_VALUE(bounced)   OVER w - FIRST_VALUE(bounced)   OVER w  AS bounced_delta,
+                    LAST_VALUE(rejected)  OVER w - FIRST_VALUE(rejected)  OVER w  AS rejected_delta,
+                    ROW_NUMBER() OVER w AS rn
+                FROM stats_snapshots
+                WHERE agent_url = ? AND ts >= ?
+                WINDOW w AS (
+                    PARTITION BY date(ts)
+                    ORDER BY ts
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                )
+            )
+            GROUP BY day
             ORDER BY day
             """,
             (agent_url, cutoff),
@@ -151,21 +165,35 @@ def get_daily_stats(db_path: str, agent_url: str, days: int = 7) -> list[dict]:
 
 
 def get_hourly_stats(db_path: str, agent_url: str, hours: int = 24) -> list[dict]:
-    """Return hourly aggregated stats for the last N hours."""
+    """Return hourly aggregated stats for the last N hours (per-hour deltas)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
 
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
             SELECT
-                strftime('%Y-%m-%d %H', ts) AS hour,
-                SUM(sent)                   AS sent,
-                SUM(deferred)               AS deferred,
-                SUM(bounced)                AS bounced,
-                SUM(rejected)               AS rejected
-            FROM stats_snapshots
-            WHERE agent_url = ? AND ts >= ?
-            GROUP BY strftime('%Y-%m-%d %H', ts)
+                hour,
+                MAX(CASE WHEN rn = 1 THEN sent_delta ELSE 0 END) AS sent,
+                MAX(CASE WHEN rn = 1 THEN deferred_delta ELSE 0 END) AS deferred,
+                MAX(CASE WHEN rn = 1 THEN bounced_delta ELSE 0 END) AS bounced,
+                MAX(CASE WHEN rn = 1 THEN rejected_delta ELSE 0 END) AS rejected
+            FROM (
+                SELECT
+                    strftime('%Y-%m-%d %H', ts)                             AS hour,
+                    LAST_VALUE(sent)      OVER w - FIRST_VALUE(sent)      OVER w  AS sent_delta,
+                    LAST_VALUE(deferred)  OVER w - FIRST_VALUE(deferred)  OVER w  AS deferred_delta,
+                    LAST_VALUE(bounced)   OVER w - FIRST_VALUE(bounced)   OVER w  AS bounced_delta,
+                    LAST_VALUE(rejected)  OVER w - FIRST_VALUE(rejected)  OVER w  AS rejected_delta,
+                    ROW_NUMBER() OVER w AS rn
+                FROM stats_snapshots
+                WHERE agent_url = ? AND ts >= ?
+                WINDOW w AS (
+                    PARTITION BY strftime('%Y-%m-%d %H', ts)
+                    ORDER BY ts
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                )
+            )
+            GROUP BY hour
             ORDER BY hour
             """,
             (agent_url, cutoff),
@@ -175,21 +203,35 @@ def get_hourly_stats(db_path: str, agent_url: str, hours: int = 24) -> list[dict
 
 
 def get_weekly_stats(db_path: str, agent_url: str, weeks: int = 4) -> list[dict]:
-    """Return weekly aggregated stats for the last N weeks."""
+    """Return weekly aggregated stats for the last N weeks (per-week deltas)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat()
 
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
             SELECT
-                strftime('%Y-W%W', ts)  AS week,
-                SUM(sent)               AS sent,
-                SUM(deferred)           AS deferred,
-                SUM(bounced)            AS bounced,
-                SUM(rejected)           AS rejected
-            FROM stats_snapshots
-            WHERE agent_url = ? AND ts >= ?
-            GROUP BY strftime('%Y-W%W', ts)
+                week,
+                MAX(CASE WHEN rn = 1 THEN sent_delta ELSE 0 END) AS sent,
+                MAX(CASE WHEN rn = 1 THEN deferred_delta ELSE 0 END) AS deferred,
+                MAX(CASE WHEN rn = 1 THEN bounced_delta ELSE 0 END) AS bounced,
+                MAX(CASE WHEN rn = 1 THEN rejected_delta ELSE 0 END) AS rejected
+            FROM (
+                SELECT
+                    strftime('%Y-W%W', ts)                                  AS week,
+                    LAST_VALUE(sent)      OVER w - FIRST_VALUE(sent)      OVER w  AS sent_delta,
+                    LAST_VALUE(deferred)  OVER w - FIRST_VALUE(deferred)  OVER w  AS deferred_delta,
+                    LAST_VALUE(bounced)   OVER w - FIRST_VALUE(bounced)   OVER w  AS bounced_delta,
+                    LAST_VALUE(rejected)  OVER w - FIRST_VALUE(rejected)  OVER w  AS rejected_delta,
+                    ROW_NUMBER() OVER w AS rn
+                FROM stats_snapshots
+                WHERE agent_url = ? AND ts >= ?
+                WINDOW w AS (
+                    PARTITION BY strftime('%Y-W%W', ts)
+                    ORDER BY ts
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                )
+            )
+            GROUP BY week
             ORDER BY week
             """,
             (agent_url, cutoff),
@@ -199,21 +241,35 @@ def get_weekly_stats(db_path: str, agent_url: str, weeks: int = 4) -> list[dict]
 
 
 def get_monthly_stats(db_path: str, agent_url: str, months: int = 12) -> list[dict]:
-    """Return monthly aggregated stats for the last N months."""
+    """Return monthly aggregated stats for the last N months (per-month deltas)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=months*30)).isoformat()
 
     with _connect(db_path) as conn:
         rows = conn.execute(
             """
             SELECT
-                strftime('%Y-%m', ts)   AS month,
-                SUM(sent)               AS sent,
-                SUM(deferred)           AS deferred,
-                SUM(bounced)            AS bounced,
-                SUM(rejected)           AS rejected
-            FROM stats_snapshots
-            WHERE agent_url = ? AND ts >= ?
-            GROUP BY strftime('%Y-%m', ts)
+                month,
+                MAX(CASE WHEN rn = 1 THEN sent_delta ELSE 0 END) AS sent,
+                MAX(CASE WHEN rn = 1 THEN deferred_delta ELSE 0 END) AS deferred,
+                MAX(CASE WHEN rn = 1 THEN bounced_delta ELSE 0 END) AS bounced,
+                MAX(CASE WHEN rn = 1 THEN rejected_delta ELSE 0 END) AS rejected
+            FROM (
+                SELECT
+                    strftime('%Y-%m', ts)                                   AS month,
+                    LAST_VALUE(sent)      OVER w - FIRST_VALUE(sent)      OVER w  AS sent_delta,
+                    LAST_VALUE(deferred)  OVER w - FIRST_VALUE(deferred)  OVER w  AS deferred_delta,
+                    LAST_VALUE(bounced)   OVER w - FIRST_VALUE(bounced)   OVER w  AS bounced_delta,
+                    LAST_VALUE(rejected)  OVER w - FIRST_VALUE(rejected)  OVER w  AS rejected_delta,
+                    ROW_NUMBER() OVER w AS rn
+                FROM stats_snapshots
+                WHERE agent_url = ? AND ts >= ?
+                WINDOW w AS (
+                    PARTITION BY strftime('%Y-%m', ts)
+                    ORDER BY ts
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                )
+            )
+            GROUP BY month
             ORDER BY month
             """,
             (agent_url, cutoff),
@@ -223,10 +279,7 @@ def get_monthly_stats(db_path: str, agent_url: str, months: int = 12) -> list[di
 
 
 def get_daily_stats_all(db_path: str, days: int = 7) -> list[dict]:
-    """Return aggregated daily stats across all agents for the last N days.
-
-    Uses MAX per agent per day to avoid double-counting multiple snapshots.
-    """
+    """Return aggregated daily stats across all agents for the last N days (per-day deltas)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
     with _connect(db_path) as conn:
@@ -234,21 +287,46 @@ def get_daily_stats_all(db_path: str, days: int = 7) -> list[dict]:
             """
             SELECT
                 day,
-                SUM(sent)      AS sent,
-                SUM(deferred)  AS deferred,
-                SUM(bounced)   AS bounced,
-                SUM(rejected)  AS rejected
+                SUM(sent_delta)      AS sent,
+                SUM(deferred_delta)  AS deferred,
+                SUM(bounced_delta)   AS bounced,
+                SUM(rejected_delta)  AS rejected
             FROM (
                 SELECT
-                    date(ts)       AS day,
+                    day,
                     agent_url,
-                    MAX(sent)      AS sent,
-                    MAX(deferred)  AS deferred,
-                    MAX(bounced)   AS bounced,
-                    MAX(rejected)  AS rejected
-                FROM stats_snapshots
-                WHERE ts >= ?
-                GROUP BY date(ts), agent_url
+                    MAX(CASE WHEN rn = 1 THEN sent_delta ELSE 0 END) AS sent_delta,
+                    MAX(CASE WHEN rn = 1 THEN deferred_delta ELSE 0 END) AS deferred_delta,
+                    MAX(CASE WHEN rn = 1 THEN bounced_delta ELSE 0 END) AS bounced_delta,
+                    MAX(CASE WHEN rn = 1 THEN rejected_delta ELSE 0 END) AS rejected_delta
+                FROM (
+                    SELECT
+                        day,
+                        agent_url,
+                        LAST_VALUE(sent)      OVER w - FIRST_VALUE(sent)      OVER w  AS sent_delta,
+                        LAST_VALUE(deferred)  OVER w - FIRST_VALUE(deferred)  OVER w  AS deferred_delta,
+                        LAST_VALUE(bounced)   OVER w - FIRST_VALUE(bounced)   OVER w  AS bounced_delta,
+                        LAST_VALUE(rejected)  OVER w - FIRST_VALUE(rejected)  OVER w  AS rejected_delta,
+                        ROW_NUMBER() OVER w AS rn
+                    FROM (
+                        SELECT
+                            date(ts) AS day,
+                            agent_url,
+                            ts,
+                            sent,
+                            deferred,
+                            bounced,
+                            rejected
+                        FROM stats_snapshots
+                        WHERE ts >= ?
+                    )
+                    WINDOW w AS (
+                        PARTITION BY agent_url, day
+                        ORDER BY ts
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                    )
+                )
+                GROUP BY day, agent_url
             )
             GROUP BY day
             ORDER BY day
@@ -260,10 +338,7 @@ def get_daily_stats_all(db_path: str, days: int = 7) -> list[dict]:
 
 
 def get_hourly_stats_all(db_path: str, hours: int = 24) -> list[dict]:
-    """Return aggregated hourly stats across all agents for the last N hours.
-
-    Uses MAX per agent per hour to avoid double-counting multiple snapshots.
-    """
+    """Return aggregated hourly stats across all agents for the last N hours (per-hour deltas)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
 
     with _connect(db_path) as conn:
@@ -271,21 +346,46 @@ def get_hourly_stats_all(db_path: str, hours: int = 24) -> list[dict]:
             """
             SELECT
                 hour,
-                SUM(sent)                   AS sent,
-                SUM(deferred)               AS deferred,
-                SUM(bounced)                AS bounced,
-                SUM(rejected)               AS rejected
+                SUM(sent_delta)      AS sent,
+                SUM(deferred_delta)  AS deferred,
+                SUM(bounced_delta)   AS bounced,
+                SUM(rejected_delta)  AS rejected
             FROM (
                 SELECT
-                    strftime('%Y-%m-%d %H', ts) AS hour,
+                    hour,
                     agent_url,
-                    MAX(sent)                   AS sent,
-                    MAX(deferred)               AS deferred,
-                    MAX(bounced)                AS bounced,
-                    MAX(rejected)               AS rejected
-                FROM stats_snapshots
-                WHERE ts >= ?
-                GROUP BY strftime('%Y-%m-%d %H', ts), agent_url
+                    MAX(CASE WHEN rn = 1 THEN sent_delta ELSE 0 END) AS sent_delta,
+                    MAX(CASE WHEN rn = 1 THEN deferred_delta ELSE 0 END) AS deferred_delta,
+                    MAX(CASE WHEN rn = 1 THEN bounced_delta ELSE 0 END) AS bounced_delta,
+                    MAX(CASE WHEN rn = 1 THEN rejected_delta ELSE 0 END) AS rejected_delta
+                FROM (
+                    SELECT
+                        hour,
+                        agent_url,
+                        LAST_VALUE(sent)      OVER w - FIRST_VALUE(sent)      OVER w  AS sent_delta,
+                        LAST_VALUE(deferred)  OVER w - FIRST_VALUE(deferred)  OVER w  AS deferred_delta,
+                        LAST_VALUE(bounced)   OVER w - FIRST_VALUE(bounced)   OVER w  AS bounced_delta,
+                        LAST_VALUE(rejected)  OVER w - FIRST_VALUE(rejected)  OVER w  AS rejected_delta,
+                        ROW_NUMBER() OVER w AS rn
+                    FROM (
+                        SELECT
+                            strftime('%Y-%m-%d %H', ts) AS hour,
+                            agent_url,
+                            ts,
+                            sent,
+                            deferred,
+                            bounced,
+                            rejected
+                        FROM stats_snapshots
+                        WHERE ts >= ?
+                    )
+                    WINDOW w AS (
+                        PARTITION BY agent_url, hour
+                        ORDER BY ts
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                    )
+                )
+                GROUP BY hour, agent_url
             )
             GROUP BY hour
             ORDER BY hour
@@ -297,10 +397,7 @@ def get_hourly_stats_all(db_path: str, hours: int = 24) -> list[dict]:
 
 
 def get_weekly_stats_all(db_path: str, weeks: int = 4) -> list[dict]:
-    """Return aggregated weekly stats across all agents for the last N weeks.
-
-    Uses MAX per agent per week to avoid double-counting multiple snapshots.
-    """
+    """Return aggregated weekly stats across all agents for the last N weeks (per-week deltas)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat()
 
     with _connect(db_path) as conn:
@@ -308,21 +405,46 @@ def get_weekly_stats_all(db_path: str, weeks: int = 4) -> list[dict]:
             """
             SELECT
                 week,
-                SUM(sent)               AS sent,
-                SUM(deferred)           AS deferred,
-                SUM(bounced)            AS bounced,
-                SUM(rejected)           AS rejected
+                SUM(sent_delta)      AS sent,
+                SUM(deferred_delta)  AS deferred,
+                SUM(bounced_delta)   AS bounced,
+                SUM(rejected_delta)  AS rejected
             FROM (
                 SELECT
-                    strftime('%Y-W%W', ts)  AS week,
+                    week,
                     agent_url,
-                    MAX(sent)               AS sent,
-                    MAX(deferred)           AS deferred,
-                    MAX(bounced)            AS bounced,
-                    MAX(rejected)           AS rejected
-                FROM stats_snapshots
-                WHERE ts >= ?
-                GROUP BY strftime('%Y-W%W', ts), agent_url
+                    MAX(CASE WHEN rn = 1 THEN sent_delta ELSE 0 END) AS sent_delta,
+                    MAX(CASE WHEN rn = 1 THEN deferred_delta ELSE 0 END) AS deferred_delta,
+                    MAX(CASE WHEN rn = 1 THEN bounced_delta ELSE 0 END) AS bounced_delta,
+                    MAX(CASE WHEN rn = 1 THEN rejected_delta ELSE 0 END) AS rejected_delta
+                FROM (
+                    SELECT
+                        week,
+                        agent_url,
+                        LAST_VALUE(sent)      OVER w - FIRST_VALUE(sent)      OVER w  AS sent_delta,
+                        LAST_VALUE(deferred)  OVER w - FIRST_VALUE(deferred)  OVER w  AS deferred_delta,
+                        LAST_VALUE(bounced)   OVER w - FIRST_VALUE(bounced)   OVER w  AS bounced_delta,
+                        LAST_VALUE(rejected)  OVER w - FIRST_VALUE(rejected)  OVER w  AS rejected_delta,
+                        ROW_NUMBER() OVER w AS rn
+                    FROM (
+                        SELECT
+                            strftime('%Y-W%W', ts) AS week,
+                            agent_url,
+                            ts,
+                            sent,
+                            deferred,
+                            bounced,
+                            rejected
+                        FROM stats_snapshots
+                        WHERE ts >= ?
+                    )
+                    WINDOW w AS (
+                        PARTITION BY agent_url, week
+                        ORDER BY ts
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                    )
+                )
+                GROUP BY week, agent_url
             )
             GROUP BY week
             ORDER BY week
@@ -334,10 +456,7 @@ def get_weekly_stats_all(db_path: str, weeks: int = 4) -> list[dict]:
 
 
 def get_monthly_stats_all(db_path: str, months: int = 12) -> list[dict]:
-    """Return aggregated monthly stats across all agents for the last N months.
-
-    Uses MAX per agent per month to avoid double-counting multiple snapshots.
-    """
+    """Return aggregated monthly stats across all agents for the last N months (per-month deltas)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=months*30)).isoformat()
 
     with _connect(db_path) as conn:
@@ -345,21 +464,46 @@ def get_monthly_stats_all(db_path: str, months: int = 12) -> list[dict]:
             """
             SELECT
                 month,
-                SUM(sent)               AS sent,
-                SUM(deferred)           AS deferred,
-                SUM(bounced)            AS bounced,
-                SUM(rejected)           AS rejected
+                SUM(sent_delta)      AS sent,
+                SUM(deferred_delta)  AS deferred,
+                SUM(bounced_delta)   AS bounced,
+                SUM(rejected_delta)  AS rejected
             FROM (
                 SELECT
-                    strftime('%Y-%m', ts)   AS month,
+                    month,
                     agent_url,
-                    MAX(sent)               AS sent,
-                    MAX(deferred)           AS deferred,
-                    MAX(bounced)            AS bounced,
-                    MAX(rejected)           AS rejected
-                FROM stats_snapshots
-                WHERE ts >= ?
-                GROUP BY strftime('%Y-%m', ts), agent_url
+                    MAX(CASE WHEN rn = 1 THEN sent_delta ELSE 0 END) AS sent_delta,
+                    MAX(CASE WHEN rn = 1 THEN deferred_delta ELSE 0 END) AS deferred_delta,
+                    MAX(CASE WHEN rn = 1 THEN bounced_delta ELSE 0 END) AS bounced_delta,
+                    MAX(CASE WHEN rn = 1 THEN rejected_delta ELSE 0 END) AS rejected_delta
+                FROM (
+                    SELECT
+                        month,
+                        agent_url,
+                        LAST_VALUE(sent)      OVER w - FIRST_VALUE(sent)      OVER w  AS sent_delta,
+                        LAST_VALUE(deferred)  OVER w - FIRST_VALUE(deferred)  OVER w  AS deferred_delta,
+                        LAST_VALUE(bounced)   OVER w - FIRST_VALUE(bounced)   OVER w  AS bounced_delta,
+                        LAST_VALUE(rejected)  OVER w - FIRST_VALUE(rejected)  OVER w  AS rejected_delta,
+                        ROW_NUMBER() OVER w AS rn
+                    FROM (
+                        SELECT
+                            strftime('%Y-%m', ts) AS month,
+                            agent_url,
+                            ts,
+                            sent,
+                            deferred,
+                            bounced,
+                            rejected
+                        FROM stats_snapshots
+                        WHERE ts >= ?
+                    )
+                    WINDOW w AS (
+                        PARTITION BY agent_url, month
+                        ORDER BY ts
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+                    )
+                )
+                GROUP BY month, agent_url
             )
             GROUP BY month
             ORDER BY month

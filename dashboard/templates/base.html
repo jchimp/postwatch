@@ -38,6 +38,10 @@
                     <a class="nav-link{% if request.endpoint == 'tokens_page' %} active{% endif %}"
                        href="{{ url_for('tokens_page') }}">Tokens</a>
                 </li>
+                <li class="nav-item">
+                    <a class="nav-link{% if request.endpoint == 'settings' %} active{% endif %}"
+                       href="{{ url_for('settings') }}">⚙️ Settings</a>
+                </li>
             </ul>
             <span class="navbar-text me-3 text-muted">
                 Logged in as <strong>{{ session.username }}</strong>

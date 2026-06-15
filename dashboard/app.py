@@ -95,9 +95,11 @@ def _get_agents() -> list[dict]:
 
 
 def _get_api_key() -> str:
-    """Get API key: from database if set, otherwise from .env."""
+    """Get API key from database. Generated at first DB initialization."""
     db_key = models.get_setting(config.DB_PATH, "AGENT_API_KEY")
-    return db_key if db_key else config.AGENT_API_KEY
+    if not db_key:
+        raise RuntimeError("AGENT_API_KEY not found in database. DB may not be initialized.")
+    return db_key
 
 
 def _get_token_thresholds() -> dict[str, int]:

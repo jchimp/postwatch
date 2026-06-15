@@ -4,6 +4,7 @@ SQLite helpers for storing and querying polled stats snapshots.
 """
 
 import os
+import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -72,6 +73,18 @@ def init_db(db_path: str) -> None:
                     "INSERT INTO settings (key, value, updated) VALUES (?, ?, ?)",
                     (key, value, now),
                 )
+
+        # Generate AGENT_API_KEY if it doesn't exist
+        existing_key = conn.execute(
+            "SELECT value FROM settings WHERE key = ?", ("AGENT_API_KEY",)
+        ).fetchone()
+        if not existing_key:
+            api_key = secrets.token_urlsafe(32)
+            conn.execute(
+                "INSERT INTO settings (key, value, updated) VALUES (?, ?, ?)",
+                ("AGENT_API_KEY", api_key, now),
+            )
+
         conn.commit()
 
 

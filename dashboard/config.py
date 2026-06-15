@@ -14,7 +14,8 @@ ADMIN_USER = os.getenv("ADMIN_USER", "admin")
 ADMIN_PASS = os.getenv("ADMIN_PASS", "admin")  # plaintext in .env, bcrypt-checked at login
 
 # ── Agent connectivity ────────────────────────────────────────────────────────
-AGENT_API_KEY = os.getenv("AGENT_API_KEY", "changeme")
+# API key is now generated and stored entirely in SQLite at first startup.
+# No longer in .env — use dashboard Settings page to retrieve or regenerate.
 
 # Agents are now managed in the dashboard Settings page (stored in SQLite).
 # This variable is kept for backward compatibility but is not used.

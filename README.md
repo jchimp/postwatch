@@ -100,9 +100,8 @@ The installer will:
    ```bash
    sudo nano /opt/postwatch-agent/.env
    ```
-   - Set `API_KEY` to a strong random string (must match dashboard's `AGENT_API_KEY`)
-   - Set `SERVER_NAME` (e.g., "mail-relay-1")
-   - Verify `LOG_FILE`, `HOST`, `PORT`, `TOKEN_DIR`
+   - Set `API_KEY` to match the dashboard's key (you'll get this from Settings after starting the dashboard)
+   - Verify `LOG_FILE`, `HOST`, `PORT`, `TOKEN_DIR` are correct for your system
 
 2. Start the service:
    ```bash
@@ -148,8 +147,6 @@ The installer will:
    ```
    - `SECRET_KEY` — Flask session secret (use a long random string)
    - `ADMIN_USER` / `ADMIN_PASS` — Login credentials
-   - `AGENT_API_KEY` — Must match each agent's `API_KEY`
-   - `AGENTS` — Comma-separated list of agent URLs (e.g., `http://192.168.1.10:5100,http://192.168.1.11:5100`)
    - `POLL_INTERVAL_SECONDS` — Poll interval in seconds (default: 120)
 
 2. Start the dashboard:
@@ -157,10 +154,16 @@ The installer will:
    cd /opt/postwatch-dashboard
    docker-compose up --build -d
    ```
+   The agent API key is **auto-generated** on first startup and stored in the database.
 
 3. Access at `http://localhost:5000` (or at the port specified in `.env` if PORT was customized)
 
-4. View logs:
+4. Log in and retrieve the API key:
+   - Go to **Settings** → **Agent API Key**
+   - Copy this key to each agent's `API_KEY` in `.env`
+   - To regenerate anytime: click **Regenerate** on the Settings page
+
+5. View logs:
    ```bash
    docker-compose logs -f
    ```
@@ -214,9 +217,6 @@ SECRET_KEY=change-me-to-a-long-random-string
 ADMIN_USER=admin
 ADMIN_PASS=admin
 
-# Initial Agent API key (CAN be changed via Settings → Regenerate)
-AGENT_API_KEY=changeme-use-a-long-random-string
-
 # Polling interval — NOT configurable via UI (seconds)
 POLL_INTERVAL_SECONDS=120
 
@@ -231,7 +231,7 @@ PORT=5000
 **Startup-only settings:** `SECRET_KEY`, `ADMIN_USER`, `ADMIN_PASS`, `POLL_INTERVAL_SECONDS`, `DB_PATH`, `HOST`, and `PORT` require a restart to change.
 
 **Database-backed settings (configurable via Settings page):**
-- Agent API key (regenerate anytime)
+- Agent API key (auto-generated on first startup, regenerate anytime)
 - Agent URLs and names (add/remove agents)
 - Token thresholds: `TOKEN_STALE_MINUTES` and `TOKEN_EXPIRY_WARN_MINUTES` (applied globally)
 

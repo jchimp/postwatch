@@ -18,6 +18,7 @@ data/
 .env
 *.key
 *.pem
+!.env.example
 
 #=== Docs / Build output ===
 docs/_build/

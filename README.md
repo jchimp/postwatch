@@ -72,8 +72,14 @@ python agent.py
 
 Requires: **Linux, root access, Python 3.7+**
 
+First, make the installer executable:
 ```bash
 cd agent
+chmod +x install.sh
+```
+
+Then run it as root:
+```bash
 sudo ./install.sh
 ```
 
@@ -82,6 +88,7 @@ The installer will:
 - Install Python virtual environment
 - Copy agent code and configuration
 - Install systemd service (`postwatch-agent`)
+- Enable UFW firewall rule for port 5100 (if UFW is installed)
 
 **After installation:**
 

@@ -40,6 +40,15 @@ echo "==> Installing systemd service"
 cp postwatch-agent.service /etc/systemd/system/postwatch-agent.service
 systemctl daemon-reload
 
+# Enable firewall for port 5100
+echo "==> Enabling UFW for port 5100"
+if command -v ufw &> /dev/null; then
+    ufw allow 5100/tcp
+    echo "    UFW rule added for port 5100"
+else
+    echo "    WARNING: UFW not found or not installed"
+fi
+
 echo ""
 echo "════════════════════════════════════════════════════════════════"
 echo "  Installation complete!"

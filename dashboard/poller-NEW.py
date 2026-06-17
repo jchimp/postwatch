@@ -1,5 +1,5 @@
 """
-postwatch dashboard — poller.py
+postfix-watcher dashboard — poller.py
 Background job that polls each agent and stores stats snapshots in SQLite.
 
 Stats are stored as DELTAS between polls. The raw cumulative totals from each
@@ -12,15 +12,14 @@ from datetime import datetime, timezone
 import requests
 
 import config
-import models
-from models import save_snapshot
+from models import get_last_totals, save_snapshot
 
 
 def _compute_delta(current: int, previous: int) -> int:
     """Compute the delta between two cumulative counters.
 
-    If the delta is negative (log rotation reset the counters), treat the
-    current value as the delta — everything since the reset is new.
+    If delta is negative (log rotation reset the counters), treat the current
+    value as the delta — everything since the reset is new.
     """
     delta = current - previous
     return delta if delta >= 0 else current
@@ -28,21 +27,10 @@ def _compute_delta(current: int, previous: int) -> int:
 
 def poll_agents() -> None:
     """Poll every configured agent for stats, status, queue, and token health."""
-    # Get agents from database (post-migration from .env)
-    agents = models.get_agents(config.DB_PATH)
+    ts = datetime.now(timezone.utc).isoformat()
+    headers = {"X-API-Key": config.AGENT_API_KEY}
 
-    # Get API key from database, fall back to .env
-    api_key = models.get_setting(config.DB_PATH, "AGENT_API_KEY") or config.AGENT_API_KEY
-
-    if not agents:
-        print("[poller] No agents configured in database")
-        return
-
-    headers = {"X-API-Key": api_key}
-
-    for agent in agents:
-        url = agent["url"]
-        ts = datetime.now(timezone.utc).isoformat()
+    for url in config.AGENTS:
         try:
             # ── Stats ─────────────────────────────────────────────────────
             stats_resp = requests.get(
@@ -55,7 +43,7 @@ def poll_agents() -> None:
             raw_rejected = totals.get("rejected", 0)
 
             # ── Compute deltas ────────────────────────────────────────────
-            prev = models.get_last_totals(config.DB_PATH, url)
+            prev = get_last_totals(config.DB_PATH, url)
 
             if prev is None:
                 # First poll for this agent — no delta yet, just baseline
@@ -114,8 +102,8 @@ def poll_agents() -> None:
 
             print(
                 f"[poller] Polled {server_name} — "
-                f"Δsent={d_sent} Δdef={d_deferred} "
-                f"Δbnc={d_bounced} Δrej={d_rejected} "
+                f"\\u0394sent={d_sent} \\u0394def={d_deferred} "
+                f"\\u0394bnc={d_bounced} \\u0394rej={d_rejected} "
                 f"queue={queue_count} (raw: s={raw_sent} d={raw_deferred} "
                 f"b={raw_bounced} r={raw_rejected})"
             )

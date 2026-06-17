@@ -6,6 +6,64 @@
 {% endblock %}
 
 {% block content %}
+<!-- ── Per-Agent Controls ─────────────────────────────────────────────────── -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h4 class="mb-0"><i class="bi bi-speedometer2"></i> Overview</h4>
+    <div class="d-flex align-items-center gap-2">
+        {% if agents|length > 0 %}
+        <select id="agentSelect" class="form-select form-select-sm" style="width:auto">
+            {% if agents|length > 1 %}
+            <option value="all">All Hosts</option>
+            {% endif %}
+            {% for a in agents %}
+            <option value="{{ a.url }}">{{ a.display }}</option>
+            {% endfor %}
+        </select>
+        {% else %}
+        <input type="hidden" id="agentSelect" value="">
+        {% endif %}
+        <button class="btn btn-sm btn-outline-secondary" onclick="fetchOverview()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+    </div>
+</div>
+
+<!-- Stat Cards -->
+<div class="row g-3 mb-1">
+    <div class="col">
+        <div class="card stat-card" id="cardStatus">
+            <span class="status-dot inactive" id="statusDot"></span>
+            <span id="statusText">Loading…</span>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card stat-card">
+            <div class="stat-value text-success-nord" id="cardSent">—</div>
+            <div class="stat-label">Sent</div>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card stat-card">
+            <div class="stat-value text-warning-nord" id="cardDeferred">—</div>
+            <div class="stat-label">Deferred</div>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card stat-card">
+            <div class="stat-value" style="color:var(--nord12)" id="cardBounced">—</div>
+            <div class="stat-label">Bounced</div>
+        </div>
+    </div>
+    <div class="col">
+        <div class="card stat-card">
+            <div class="stat-value" id="cardQueue">—</div>
+            <div class="stat-label">Queue Depth</div>
+        </div>
+    </div>
+</div>
+<p class="text-muted small mb-4">
+    <i class="bi bi-info-circle"></i>
+    Live counts from the last 10,000 log lines on each host — a rolling snapshot, not a daily total.
+</p>
+
 <!-- ── Agent Status Table ─────────────────────────────────────────────────── -->
 <div class="row g-3 mb-4">
     <div class="col-12">
@@ -49,59 +107,14 @@
         </div>
     </div>
 </div>
+<p>&nbsp;</p>
 
-<!-- ── Per-Agent Controls ─────────────────────────────────────────────────── -->
-<div class="d-flex justify-content-between align-items-center mb-4">
-    <h4 class="mb-0"><i class="bi bi-speedometer2"></i> Overview</h4>
-    <div class="d-flex align-items-center gap-2">
-        {% if agents|length > 0 %}
-        <select id="agentSelect" class="form-select form-select-sm" style="width:auto">
-            {% if agents|length > 1 %}
-            <option value="all">All Hosts</option>
-            {% endif %}
-            {% for a in agents %}
-            <option value="{{ a.url }}">{{ a.display }}</option>
-            {% endfor %}
-        </select>
-        {% else %}
-        <input type="hidden" id="agentSelect" value="">
-        {% endif %}
-        <button class="btn btn-sm btn-outline-secondary" onclick="fetchOverview()"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
-    </div>
-</div>
-
-<!-- Stat Cards -->
-<div class="row g-3 mb-4">
-    <div class="col">
-        <div class="card stat-card" id="cardStatus">
-            <span class="status-dot inactive" id="statusDot"></span>
-            <span id="statusText">Loading…</span>
-        </div>
-    </div>
-    <div class="col">
-        <div class="card stat-card">
-            <div class="stat-value text-success-nord" id="cardSent">—</div>
-            <div class="stat-label">Sent Today</div>
-        </div>
-    </div>
-    <div class="col">
-        <div class="card stat-card">
-            <div class="stat-value text-warning-nord" id="cardDeferred">—</div>
-            <div class="stat-label">Deferred</div>
-        </div>
-    </div>
-    <div class="col">
-        <div class="card stat-card">
-            <div class="stat-value" style="color:var(--nord12)" id="cardBounced">—</div>
-            <div class="stat-label">Bounced</div>
-        </div>
-    </div>
-    <div class="col">
-        <div class="card stat-card">
-            <div class="stat-value" id="cardQueue">—</div>
-            <div class="stat-label">Queue Depth</div>
-        </div>
-    </div>
+<!-- ── Volume Over Time (charts) ──────────────────────────────────────────── -->
+<div class="mb-3">
+    <h5 class="mb-1"><i class="bi bi-bar-chart-line"></i> Volume Over Time</h5>
+    <p class="text-muted small mb-0">
+        Aggregated mail totals accumulated from each poll. Independent of the live counts above.
+    </p>
 </div>
 
 <!-- Daily Chart -->

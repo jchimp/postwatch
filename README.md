@@ -19,7 +19,7 @@ A lightweight, two-component Postfix monitoring dashboard for tracking mail serv
 ## Architecture
 
 ```
-Agent (×N, systemd, root, :5100)  ←──REST/JSON──→  Dashboard (×1, Docker, :5000)  ←──→  Browser
+Agent (×N, systemd, root, :5100) <--- REST/JSON --->  Dashboard (×1, Docker, :5000)  <--->  Browser
 ```
 
 | Component | Role | Transport |

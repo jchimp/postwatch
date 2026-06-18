@@ -113,7 +113,8 @@
 <div class="mb-3">
     <h5 class="mb-1"><i class="bi bi-bar-chart-line"></i> Volume Over Time</h5>
     <p class="text-muted small mb-0">
-        Aggregated mail totals accumulated from each poll. Independent of the live counts above.
+        Hourly and daily volume is bucketed by the time each message was
+        processed, read live from the agent's current <code>mail.log</code>.
     </p>
 </div>
 
@@ -121,7 +122,10 @@
 <div class="row g-3 mb-4">
     <div class="col-12">
         <div class="card">
-            <div class="card-header">Daily Volume (7 days)</div>
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Daily Volume (7 days)</span>
+                <span class="text-muted small">From current mail.log — rotated history not shown</span>
+            </div>
             <div class="card-body">
                 <canvas id="dailyChart" height="300"></canvas>
             </div>
@@ -133,21 +137,12 @@
 <div class="row g-3 mb-4">
     <div class="col-12">
         <div class="card">
-            <div class="card-header">Hourly Volume (24 h)</div>
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Hourly Volume (24 h)</span>
+                <span class="text-muted small">From current mail.log — rotated history not shown</span>
+            </div>
             <div class="card-body">
                 <canvas id="hourlyChart" height="200"></canvas>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Weekly Chart -->
-<div class="row g-3 mb-4">
-    <div class="col-12">
-        <div class="card">
-            <div class="card-header">Weekly Volume (4 weeks)</div>
-            <div class="card-body">
-                <canvas id="weeklyChart" height="250"></canvas>
             </div>
         </div>
     </div>
@@ -157,7 +152,10 @@
 <div class="row g-3 mb-4">
     <div class="col-12">
         <div class="card">
-            <div class="card-header">Monthly Volume (12 months)</div>
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <span>Monthly Volume (12 months)</span>
+                <span class="text-muted small">Long-range trend from stored poll snapshots</span>
+            </div>
             <div class="card-body">
                 <canvas id="monthlyChart" height="250"></canvas>
             </div>
@@ -199,8 +197,79 @@ const chartOpts = (stacked) => ({
 
 let dailyChart = null;
 let hourlyChart = null;
-let weeklyChart = null;
 let monthlyChart = null;
+
+const CATS = ['sent', 'deferred', 'bounced', 'rejected'];
+const EMPTY_BUCKET = { sent: 0, deferred: 0, bounced: 0, rejected: 0 };
+
+// Build stacked-bar datasets from an array of bucket rows.
+function datasetsFrom(rows) {
+    return CATS.map(k => ({
+        label: k.charAt(0).toUpperCase() + k.slice(1),
+        data: rows.map(r => r[k] || 0),
+        backgroundColor: COLORS[k],
+    }));
+}
+
+// Expand a {"YYYY-MM-DD HH": {...}} map into a contiguous, gap-filled list of
+// {key, sent, ...} from the earliest to latest present hour, so dead hours show
+// as zero-height bars instead of vanishing. Arithmetic is on date components,
+// so it's agnostic to the agent's local timezone.
+function expandHourly(buckets) {
+    const keys = Object.keys(buckets).sort();
+    if (!keys.length) return [];
+    const parse = k => {
+        const [d, h] = k.split(' ');
+        const [Y, M, D] = d.split('-').map(Number);
+        return new Date(Y, M - 1, D, Number(h));
+    };
+    const pad = n => String(n).padStart(2, '0');
+    const fmt = dt =>
+        `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())} ${pad(dt.getHours())}`;
+    const end = parse(keys[keys.length - 1]);
+    const out = [];
+    for (let cur = parse(keys[0]); cur <= end; cur.setHours(cur.getHours() + 1)) {
+        const key = fmt(cur);
+        out.push({ key, ...EMPTY_BUCKET, ...(buckets[key] || {}) });
+    }
+    return out;
+}
+
+// Same idea for {"YYYY-MM-DD": {...}} daily buckets.
+function expandDaily(buckets) {
+    const keys = Object.keys(buckets).sort();
+    if (!keys.length) return [];
+    const parse = k => { const [Y, M, D] = k.split('-').map(Number); return new Date(Y, M - 1, D); };
+    const pad = n => String(n).padStart(2, '0');
+    const fmt = dt => `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
+    const end = parse(keys[keys.length - 1]);
+    const out = [];
+    for (let cur = parse(keys[0]); cur <= end; cur.setDate(cur.getDate() + 1)) {
+        const key = fmt(cur);
+        out.push({ key, ...EMPTY_BUCKET, ...(buckets[key] || {}) });
+    }
+    return out;
+}
+
+// Render the live hourly + daily charts from an agent /stats payload
+// (single agent or the merged /api/stats/all response).
+function renderVolumeCharts(stats) {
+    const hRows = expandHourly(stats.hourly || {}).slice(-24);
+    hourlyChart = buildChart(
+        document.getElementById('hourlyChart'),
+        hRows.map(r => r.key.split(' ')[1] + ':00'),
+        datasetsFrom(hRows),
+        hourlyChart,
+    );
+
+    const dRows = expandDaily(stats.daily || {}).slice(-7);
+    dailyChart = buildChart(
+        document.getElementById('dailyChart'),
+        dRows.map(r => r.key),
+        datasetsFrom(dRows),
+        dailyChart,
+    );
+}
 
 function getAgent() {
     const el = document.getElementById('agentSelect');
@@ -309,13 +378,14 @@ async function fetchOverview() {
             document.getElementById('statusText').textContent = 'Unreachable';
         }
 
-        // Live stats (from agent log parser)
+        // Live stats — one /stats call drives both the cards and the charts.
         try {
             const st = await fetchJSON(`/api/stats/${a}`);
             const t = st.totals || {};
             document.getElementById('cardSent').textContent = t.sent ?? '—';
             document.getElementById('cardDeferred').textContent = t.deferred ?? '—';
             document.getElementById('cardBounced').textContent = t.bounced ?? '—';
+            renderVolumeCharts(st);
         } catch {}
 
         // Queue
@@ -330,7 +400,7 @@ async function fetchOverview() {
         document.getElementById('statusDot').className = 'status-dot';
         document.getElementById('statusText').textContent = 'Aggregated';
 
-        // Get totals from latest snapshot of each agent (matches agent logs)
+        // Cards: last-known totals from the DB (resilient if an agent is down).
         try {
             const resp = await fetchJSON('/api/totals/all');
             const t = resp.totals || {};
@@ -344,54 +414,16 @@ async function fetchOverview() {
         }
 
         document.getElementById('cardQueue').textContent = '—';
+
+        // Charts: live hourly/daily buckets merged across all agents.
+        try {
+            const st = await fetchJSON('/api/stats/all');
+            renderVolumeCharts(st);
+        } catch {}
     }
 
-    // ── Charts (daily & hourly) ────────────────────────────────────────────────
+    // ── Monthly chart (long-range trend, from SQLite snapshots) ────────────────
     const chartUrl = isAll ? 'all' : enc(agent);
-
-    // Daily chart (from SQLite)
-    try {
-        const d = await fetchJSON(`/api/chart/daily/${chartUrl}?days=7`);
-        const labels = d.map(r => r.day);
-        const ds = ['sent','deferred','bounced','rejected'].map(k => ({
-            label: k.charAt(0).toUpperCase() + k.slice(1),
-            data: d.map(r => r[k] || 0),
-            backgroundColor: COLORS[k],
-        }));
-        dailyChart = buildChart(
-            document.getElementById('dailyChart'), labels, ds, dailyChart
-        );
-    } catch {}
-
-    // Hourly chart (from SQLite)
-    try {
-        const h = await fetchJSON(`/api/chart/hourly/${chartUrl}?hours=24`);
-        const labels = h.map(r => r.hour ? r.hour.split(' ')[1] + ':00' : '');
-        const ds = ['sent','deferred','bounced','rejected'].map(k => ({
-            label: k.charAt(0).toUpperCase() + k.slice(1),
-            data: h.map(r => r[k] || 0),
-            backgroundColor: COLORS[k],
-        }));
-        hourlyChart = buildChart(
-            document.getElementById('hourlyChart'), labels, ds, hourlyChart
-        );
-    } catch {}
-
-    // Weekly chart (from SQLite)
-    try {
-        const w = await fetchJSON(`/api/chart/weekly/${chartUrl}?weeks=4`);
-        const labels = w.map(r => r.week || '');
-        const ds = ['sent','deferred','bounced','rejected'].map(k => ({
-            label: k.charAt(0).toUpperCase() + k.slice(1),
-            data: w.map(r => r[k] || 0),
-            backgroundColor: COLORS[k],
-        }));
-        weeklyChart = buildChart(
-            document.getElementById('weeklyChart'), labels, ds, weeklyChart
-        );
-    } catch {}
-
-    // Monthly chart (from SQLite)
     try {
         const m = await fetchJSON(`/api/chart/monthly/${chartUrl}?months=12`);
         const labels = m.map(r => r.month || '');

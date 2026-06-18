@@ -364,6 +364,52 @@ def api_token_status(agent_url):
         return jsonify({"error": str(exc)}), 502
 
 
+@app.route("/api/stats/all")
+@login_required
+def api_stats_all():
+    """Aggregate live hourly/daily buckets across all agents.
+
+    Fans out to each agent's /stats and merges the totals and the per-hour /
+    per-day buckets (keyed by log-entry time). Unreachable agents are skipped
+    so one bad host never blanks the whole chart.
+    """
+    agents = models.get_agents(config.DB_PATH)
+    headers = _agent_headers()
+
+    totals = {"sent": 0, "deferred": 0, "bounced": 0, "rejected": 0}
+    hourly: dict[str, dict[str, int]] = {}
+    daily: dict[str, dict[str, int]] = {}
+
+    def _merge(dst: dict, src: dict) -> None:
+        for key, cats in src.items():
+            bucket = dst.setdefault(
+                key, {"sent": 0, "deferred": 0, "bounced": 0, "rejected": 0}
+            )
+            for cat, val in cats.items():
+                bucket[cat] = bucket.get(cat, 0) + val
+
+    for agent in agents:
+        try:
+            r = http_requests.get(
+                f"{agent['url']}/stats", headers=headers, timeout=10
+            )
+            if r.status_code != 200:
+                continue
+            data = r.json()
+        except Exception:
+            continue
+        for cat in totals:
+            totals[cat] += data.get("totals", {}).get(cat, 0)
+        _merge(hourly, data.get("hourly", {}))
+        _merge(daily, data.get("daily", {}))
+
+    return jsonify({
+        "totals": totals,
+        "hourly": dict(sorted(hourly.items())),
+        "daily": dict(sorted(daily.items())),
+    })
+
+
 @app.route("/api/stats/<path:agent_url>")
 @login_required
 def api_stats(agent_url):
@@ -414,61 +460,17 @@ def api_queue_delete(agent_url):
 
 # ══════════════════════════════════════════════════════════════════════════════
 # API — stored stats from SQLite
+#
+# Hourly/daily charts now come from the live agent /stats buckets (see
+# /api/stats/<agent> and /api/stats/all). Only the long-range Monthly chart is
+# still served from SQLite deltas, since the agent's log window can't span it.
 # ══════════════════════════════════════════════════════════════════════════════
-
-@app.route("/api/chart/daily/<path:agent_url>")
-@login_required
-def api_chart_daily(agent_url):
-    days = request.args.get("days", 7, type=int)
-    data = models.get_daily_stats(config.DB_PATH, agent_url, days=days)
-    return jsonify(data)
-
-
-@app.route("/api/chart/hourly/<path:agent_url>")
-@login_required
-def api_chart_hourly(agent_url):
-    hours = request.args.get("hours", 24, type=int)
-    data = models.get_hourly_stats(config.DB_PATH, agent_url, hours=hours)
-    return jsonify(data)
-
-
-@app.route("/api/chart/weekly/<path:agent_url>")
-@login_required
-def api_chart_weekly(agent_url):
-    weeks = request.args.get("weeks", 4, type=int)
-    data = models.get_weekly_stats(config.DB_PATH, agent_url, weeks=weeks)
-    return jsonify(data)
-
 
 @app.route("/api/chart/monthly/<path:agent_url>")
 @login_required
 def api_chart_monthly(agent_url):
     months = request.args.get("months", 12, type=int)
     data = models.get_monthly_stats(config.DB_PATH, agent_url, months=months)
-    return jsonify(data)
-
-
-@app.route("/api/chart/daily/all")
-@login_required
-def api_chart_daily_all():
-    days = request.args.get("days", 7, type=int)
-    data = models.get_daily_stats_all(config.DB_PATH, days=days)
-    return jsonify(data)
-
-
-@app.route("/api/chart/hourly/all")
-@login_required
-def api_chart_hourly_all():
-    hours = request.args.get("hours", 24, type=int)
-    data = models.get_hourly_stats_all(config.DB_PATH, hours=hours)
-    return jsonify(data)
-
-
-@app.route("/api/chart/weekly/all")
-@login_required
-def api_chart_weekly_all():
-    weeks = request.args.get("weeks", 4, type=int)
-    data = models.get_weekly_stats_all(config.DB_PATH, weeks=weeks)
     return jsonify(data)
 
 

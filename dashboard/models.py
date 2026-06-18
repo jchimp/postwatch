@@ -5,6 +5,11 @@ SQLite helpers for storing and querying polled stats snapshots.
 The sent/deferred/bounced/rejected columns store DELTAS (change since the last
 snapshot). The raw_* columns store the cumulative totals reported by the agent
 so the next poll can compute the next delta.
+
+Hourly and daily charts are NOT sourced from here — they come from the agent's
+live /stats buckets (keyed by actual log-entry time) to avoid snapshot-timing
+artifacts. The delta columns now feed only the long-range Monthly chart and the
+initial server-render of the Agent Status table; raw_* feeds "All Hosts" totals.
 """
 
 import os
@@ -176,78 +181,6 @@ def get_last_totals(db_path: str, agent_url: str) -> dict | None:
     return dict(row) if row else None
 
 
-def get_daily_stats(db_path: str, agent_url: str, days: int = 7) -> list[dict]:
-    """Return daily aggregated deltas for the last N days."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                date(ts)       AS day,
-                SUM(sent)      AS sent,
-                SUM(deferred)  AS deferred,
-                SUM(bounced)   AS bounced,
-                SUM(rejected)  AS rejected
-            FROM stats_snapshots
-            WHERE agent_url = ? AND ts >= ?
-            GROUP BY date(ts)
-            ORDER BY day
-            """,
-            (agent_url, cutoff),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
-
-
-def get_hourly_stats(db_path: str, agent_url: str, hours: int = 24) -> list[dict]:
-    """Return hourly aggregated deltas for the last N hours."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                strftime('%Y-%m-%d %H', ts) AS hour,
-                SUM(sent)                   AS sent,
-                SUM(deferred)               AS deferred,
-                SUM(bounced)                AS bounced,
-                SUM(rejected)               AS rejected
-            FROM stats_snapshots
-            WHERE agent_url = ? AND ts >= ?
-            GROUP BY strftime('%Y-%m-%d %H', ts)
-            ORDER BY hour
-            """,
-            (agent_url, cutoff),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
-
-
-def get_weekly_stats(db_path: str, agent_url: str, weeks: int = 4) -> list[dict]:
-    """Return weekly aggregated deltas for the last N weeks."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat()
-
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                strftime('%Y-W%W', ts) AS week,
-                SUM(sent)              AS sent,
-                SUM(deferred)          AS deferred,
-                SUM(bounced)           AS bounced,
-                SUM(rejected)          AS rejected
-            FROM stats_snapshots
-            WHERE agent_url = ? AND ts >= ?
-            GROUP BY strftime('%Y-W%W', ts)
-            ORDER BY week
-            """,
-            (agent_url, cutoff),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
-
-
 def get_monthly_stats(db_path: str, agent_url: str, months: int = 12) -> list[dict]:
     """Return monthly aggregated deltas for the last N months."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=months*30)).isoformat()
@@ -267,78 +200,6 @@ def get_monthly_stats(db_path: str, agent_url: str, months: int = 12) -> list[di
             ORDER BY month
             """,
             (agent_url, cutoff),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
-
-
-def get_daily_stats_all(db_path: str, days: int = 7) -> list[dict]:
-    """Return aggregated daily deltas across all agents for the last N days."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                date(ts)       AS day,
-                SUM(sent)      AS sent,
-                SUM(deferred)  AS deferred,
-                SUM(bounced)   AS bounced,
-                SUM(rejected)  AS rejected
-            FROM stats_snapshots
-            WHERE ts >= ?
-            GROUP BY date(ts)
-            ORDER BY day
-            """,
-            (cutoff,),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
-
-
-def get_hourly_stats_all(db_path: str, hours: int = 24) -> list[dict]:
-    """Return aggregated hourly deltas across all agents for the last N hours."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                strftime('%Y-%m-%d %H', ts) AS hour,
-                SUM(sent)                   AS sent,
-                SUM(deferred)               AS deferred,
-                SUM(bounced)                AS bounced,
-                SUM(rejected)               AS rejected
-            FROM stats_snapshots
-            WHERE ts >= ?
-            GROUP BY strftime('%Y-%m-%d %H', ts)
-            ORDER BY hour
-            """,
-            (cutoff,),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
-
-
-def get_weekly_stats_all(db_path: str, weeks: int = 4) -> list[dict]:
-    """Return aggregated weekly deltas across all agents for the last N weeks."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat()
-
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                strftime('%Y-W%W', ts) AS week,
-                SUM(sent)              AS sent,
-                SUM(deferred)          AS deferred,
-                SUM(bounced)           AS bounced,
-                SUM(rejected)          AS rejected
-            FROM stats_snapshots
-            WHERE ts >= ?
-            GROUP BY strftime('%Y-W%W', ts)
-            ORDER BY week
-            """,
-            (cutoff,),
         ).fetchall()
 
     return [dict(row) for row in rows]

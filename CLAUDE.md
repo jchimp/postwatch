@@ -63,7 +63,7 @@ part2 = """## Agent Endpoints
 - **Frontend JS**: Each template has `{% block scripts %}` — vanilla JS, no framework. Calls `/api/*` with `fetch()`.
 - **SSE chain**: `tail -F` → agent generator → `text/event-stream` → dashboard proxy → browser `EventSource`.
 - **Config**: Startup via `.env` (python-dotenv). Runtime via SQLite `settings` table (API key, token thresholds) and `agents` table (agent URLs/names).
-- **Charts**: Chart.js in `overview.html`. Daily data from `/api/chart/daily/` (SQLite). Live stats from `/api/stats/` (agent).
+- **Charts**: Chart.js in `overview.html`. Hourly/daily charts come from the agent's live `/stats` buckets (bucketed by log-entry time) via `/api/stats/<agent>` (single) and `/api/stats/all` (merged). Monthly chart is the only chart still from SQLite deltas (`/api/chart/monthly/`).
 
 ## Common Tasks
 
@@ -113,14 +113,23 @@ cd dashboard && docker compose up --build
 - **Endpoint:** `/api/totals/all` — sums latest snapshots from all agents
 - **Implementation:** `get_latest_totals_all()` in models.py
 
-### 4-Chart View (Hourly, Daily, Weekly, Monthly)
-- **Charts:** Overview page displays all 4 time-period charts for single-agent and "All Hosts" modes
-- **Daily:** Last 7 days (grouped by day)
-- **Hourly:** Last 24 hours (grouped by hour)
-- **Weekly:** Last 4 weeks (grouped by ISO week)
-- **Monthly:** Last 12 months (grouped by month)
-- **Endpoints:** `/api/chart/{daily|hourly|weekly|monthly}/{agent_url|all}`
-- **Functions:** `get_daily_stats()`, `get_hourly_stats()`, `get_weekly_stats()`, `get_monthly_stats()` for per-agent; `_all()` variants for aggregation
+### Live-Bucketed Charts (Hourly + Daily from agent, Monthly from SQLite)
+- **Why:** SQLite snapshots are bucketed by *poll time*, not *mail time*. The
+  first poll after a restart/log-rotation dumps the whole backlog into one
+  bucket → artificial spike (often midnight). Hourly/daily now read the agent's
+  `/stats` buckets, which are keyed by actual log-entry timestamps.
+- **Hourly:** Last 24 h, bucket key `YYYY-MM-DD HH` (agent local log time).
+- **Daily:** Last 7 days, bucket key `YYYY-MM-DD`. Gap-filled to zero in JS
+  (`expandHourly`/`expandDaily` in `overview.html`) so dead hours show as empty bars.
+- **Monthly:** Last 12 months, still from SQLite deltas (the agent's ~10k-line
+  log window can't span months). Weekly chart was removed for the same reason.
+- **Endpoints:** `/api/stats/<agent>` (single, proxies agent), `/api/stats/all`
+  (fans out + merges buckets server-side), `/api/chart/monthly/{agent|all}` (SQLite).
+- **Trade-off:** Hourly/daily history is bounded by what's in the agent's current
+  `mail.log` — rotated logs are not visible. Flagged in the chart card headers.
+- **Note:** `get_hourly_stats`/`get_daily_stats`/`get_weekly_stats` (+ `_all`)
+  were removed from `models.py`. The delta columns now feed only the Monthly
+  chart and the Agent Status table's initial server-render.
 
 ### API Key Auth Error Handling
 - **Before:** Mismatched API key showed "Online · postfix down" (misleading)

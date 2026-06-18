@@ -367,27 +367,15 @@ def api_token_status(agent_url):
 @app.route("/api/stats/all")
 @login_required
 def api_stats_all():
-    """Aggregate live hourly/daily buckets across all agents.
+    """Live aggregated totals across all agents (for the 'All Hosts' stat cards).
 
-    Fans out to each agent's /stats and merges the totals and the per-hour /
-    per-day buckets (keyed by log-entry time). Unreachable agents are skipped
-    so one bad host never blanks the whole chart.
+    Fans out to each agent's /stats and sums the current-window totals.
+    Unreachable agents are skipped. Charts use /api/charts/all, not this.
     """
     agents = models.get_agents(config.DB_PATH)
     headers = _agent_headers()
 
     totals = {"sent": 0, "deferred": 0, "bounced": 0, "rejected": 0}
-    hourly: dict[str, dict[str, int]] = {}
-    daily: dict[str, dict[str, int]] = {}
-
-    def _merge(dst: dict, src: dict) -> None:
-        for key, cats in src.items():
-            bucket = dst.setdefault(
-                key, {"sent": 0, "deferred": 0, "bounced": 0, "rejected": 0}
-            )
-            for cat, val in cats.items():
-                bucket[cat] = bucket.get(cat, 0) + val
-
     for agent in agents:
         try:
             r = http_requests.get(
@@ -400,14 +388,8 @@ def api_stats_all():
             continue
         for cat in totals:
             totals[cat] += data.get("totals", {}).get(cat, 0)
-        _merge(hourly, data.get("hourly", {}))
-        _merge(daily, data.get("daily", {}))
 
-    return jsonify({
-        "totals": totals,
-        "hourly": dict(sorted(hourly.items())),
-        "daily": dict(sorted(daily.items())),
-    })
+    return jsonify({"totals": totals})
 
 
 @app.route("/api/stats/<path:agent_url>")
@@ -459,27 +441,49 @@ def api_queue_delete(agent_url):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# API — stored stats from SQLite
+# API — chart data from SQLite buckets
 #
-# Hourly/daily charts now come from the live agent /stats buckets (see
-# /api/stats/<agent> and /api/stats/all). Only the long-range Monthly chart is
-# still served from SQLite deltas, since the agent's log window can't span it.
+# Buckets are backfilled each poll from the agent's /stats (keyed by the time
+# each message was processed), so this is accurate history that survives log
+# rotation. Hourly/daily come straight from the bucket tables; weekly/monthly
+# are rolled up from the daily buckets.
 # ══════════════════════════════════════════════════════════════════════════════
 
-@app.route("/api/chart/monthly/<path:agent_url>")
-@login_required
-def api_chart_monthly(agent_url):
-    months = request.args.get("months", 12, type=int)
-    data = models.get_monthly_stats(config.DB_PATH, agent_url, months=months)
-    return jsonify(data)
+# How many raw buckets to pull before the frontend gap-fills and slices. Padded
+# so gap-fill has context on either side of the visible window.
+_HOURLY_LIMIT = 72
+_DAILY_LIMIT = 21
+_WEEKLY_LIMIT = 4
+_MONTHLY_LIMIT = 12
 
 
-@app.route("/api/chart/monthly/all")
+def _charts_for(agent_url: str | None) -> dict:
+    """Build the {hourly, daily, weekly, monthly} payload for one agent or all."""
+    if agent_url is None:
+        return {
+            "hourly": models.get_buckets_all(config.DB_PATH, "hourly", _HOURLY_LIMIT),
+            "daily": models.get_buckets_all(config.DB_PATH, "daily", _DAILY_LIMIT),
+            "weekly": models.get_period_rollup_all(config.DB_PATH, "%Y-W%W", _WEEKLY_LIMIT),
+            "monthly": models.get_period_rollup_all(config.DB_PATH, "%Y-%m", _MONTHLY_LIMIT),
+        }
+    return {
+        "hourly": models.get_buckets(config.DB_PATH, agent_url, "hourly", _HOURLY_LIMIT),
+        "daily": models.get_buckets(config.DB_PATH, agent_url, "daily", _DAILY_LIMIT),
+        "weekly": models.get_period_rollup(config.DB_PATH, agent_url, "%Y-W%W", _WEEKLY_LIMIT),
+        "monthly": models.get_period_rollup(config.DB_PATH, agent_url, "%Y-%m", _MONTHLY_LIMIT),
+    }
+
+
+@app.route("/api/charts/all")
 @login_required
-def api_chart_monthly_all():
-    months = request.args.get("months", 12, type=int)
-    data = models.get_monthly_stats_all(config.DB_PATH, months=months)
-    return jsonify(data)
+def api_charts_all():
+    return jsonify(_charts_for(None))
+
+
+@app.route("/api/charts/<path:agent_url>")
+@login_required
+def api_charts(agent_url):
+    return jsonify(_charts_for(agent_url))
 
 
 @app.route("/api/snapshot/<path:agent_url>")
@@ -487,14 +491,6 @@ def api_chart_monthly_all():
 def api_snapshot(agent_url):
     snap = models.get_latest_snapshot(config.DB_PATH, agent_url)
     return jsonify(snap or {})
-
-
-@app.route("/api/totals/all")
-@login_required
-def api_totals_all():
-    """Return aggregated totals from latest snapshot of each agent."""
-    totals = models.get_latest_totals_all(config.DB_PATH)
-    return jsonify({"totals": totals})
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

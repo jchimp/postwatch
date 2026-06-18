@@ -1,9 +1,13 @@
 """
 postwatch dashboard — poller.py
-Background job that polls each agent and stores stats snapshots in SQLite.
+Background job that polls each agent and persists its data to SQLite.
 
-Stats are stored as DELTAS between polls. The raw cumulative totals from each
-agent response are also saved so the next poll can compute the next delta.
+Two things are stored per cycle:
+  - Volume buckets (hourly + daily) — UPSERTed from the agent's /stats buckets,
+    which are keyed by the time each message was processed. This is the accurate
+    mail-volume history the charts read.
+  - A point-in-time snapshot — postfix active state, queue depth, token health,
+    and the poll timestamp. Feeds the Agent Status table.
 """
 
 import json
@@ -13,22 +17,11 @@ import requests
 
 import config
 import models
-from models import save_snapshot
-
-
-def _compute_delta(current: int, previous: int) -> int:
-    """Compute the delta between two cumulative counters.
-
-    If the delta is negative (log rotation reset the counters), treat the
-    current value as the delta — everything since the reset is new.
-    """
-    delta = current - previous
-    return delta if delta >= 0 else current
+from models import save_snapshot, upsert_buckets
 
 
 def poll_agents() -> None:
     """Poll every configured agent for stats, status, queue, and token health."""
-    # Get agents from database (post-migration from .env)
     agents = models.get_agents(config.DB_PATH)
 
     # Get API key from database, fall back to .env
@@ -44,30 +37,13 @@ def poll_agents() -> None:
         url = agent["url"]
         ts = datetime.now(timezone.utc).isoformat()
         try:
-            # ── Stats ─────────────────────────────────────────────────────
+            # ── Stats → volume buckets ────────────────────────────────────
             stats_resp = requests.get(
                 f"{url}/stats", headers=headers, timeout=10
             ).json()
             totals = stats_resp.get("totals", {})
-            raw_sent = totals.get("sent", 0)
-            raw_deferred = totals.get("deferred", 0)
-            raw_bounced = totals.get("bounced", 0)
-            raw_rejected = totals.get("rejected", 0)
-
-            # ── Compute deltas ────────────────────────────────────────────
-            prev = models.get_last_totals(config.DB_PATH, url)
-
-            if prev is None:
-                # First poll for this agent — no delta yet, just baseline
-                d_sent = 0
-                d_deferred = 0
-                d_bounced = 0
-                d_rejected = 0
-            else:
-                d_sent = _compute_delta(raw_sent, prev["raw_sent"])
-                d_deferred = _compute_delta(raw_deferred, prev["raw_deferred"])
-                d_bounced = _compute_delta(raw_bounced, prev["raw_bounced"])
-                d_rejected = _compute_delta(raw_rejected, prev["raw_rejected"])
+            upsert_buckets(config.DB_PATH, url, "hourly", stats_resp.get("hourly", {}))
+            upsert_buckets(config.DB_PATH, url, "daily", stats_resp.get("daily", {}))
 
             # ── Status ────────────────────────────────────────────────────
             status_resp = requests.get(
@@ -93,20 +69,12 @@ def poll_agents() -> None:
             except Exception:
                 pass  # Token monitoring is optional
 
-            # ── Save ──────────────────────────────────────────────────────
+            # ── Save point-in-time snapshot ───────────────────────────────
             save_snapshot(
                 db_path=config.DB_PATH,
                 agent_url=url,
                 server_name=server_name,
                 ts=ts,
-                sent=d_sent,
-                deferred=d_deferred,
-                bounced=d_bounced,
-                rejected=d_rejected,
-                raw_sent=raw_sent,
-                raw_deferred=raw_deferred,
-                raw_bounced=raw_bounced,
-                raw_rejected=raw_rejected,
                 queue_count=queue_count,
                 token_status_json=token_json,
                 active=active,
@@ -114,10 +82,11 @@ def poll_agents() -> None:
 
             print(
                 f"[poller] Polled {server_name} — "
-                f"Δsent={d_sent} Δdef={d_deferred} "
-                f"Δbnc={d_bounced} Δrej={d_rejected} "
-                f"queue={queue_count} (raw: s={raw_sent} d={raw_deferred} "
-                f"b={raw_bounced} r={raw_rejected})"
+                f"buckets(h={len(stats_resp.get('hourly', {}))} "
+                f"d={len(stats_resp.get('daily', {}))}) "
+                f"totals(s={totals.get('sent', 0)} d={totals.get('deferred', 0)} "
+                f"b={totals.get('bounced', 0)} r={totals.get('rejected', 0)}) "
+                f"queue={queue_count}"
             )
 
         except Exception as exc:

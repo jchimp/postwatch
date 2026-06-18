@@ -309,6 +309,40 @@ def token_status():
     })
 
 
+# Log timestamp formats seen in mail.log:
+#   ISO 8601 / RFC3339:  2026-06-17T22:00:16.715389-06:00   (rsyslog/journald)
+#   Traditional syslog:  Jun 17 22:00:16                     (BSD-style, no year)
+_ISO_TS_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)?)"
+)
+_SYSLOG_TS_RE = re.compile(r"^(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})")
+
+
+def _parse_log_timestamp(line: str, current_year: int) -> datetime | None:
+    """Parse the leading timestamp of a mail.log line.
+
+    Accepts ISO 8601/RFC3339 (with optional fractional seconds and timezone
+    offset) and traditional BSD syslog format. Returns the datetime as written
+    in the log (local wall-clock time, so buckets reflect the hour the message
+    was actually processed), or None if no timestamp is recognized.
+    """
+    m = _ISO_TS_RE.match(line)
+    if m:
+        try:
+            return datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    m = _SYSLOG_TS_RE.match(line)
+    if m:
+        try:
+            return datetime.strptime(f"{current_year} {m.group(1)}", "%Y %b %d %H:%M:%S")
+        except ValueError:
+            return None
+
+    return None
+
+
 # ── GET /stats ────────────────────────────────────────────────────────────────
 @app.route("/stats")
 @require_api_key
@@ -322,9 +356,6 @@ def stats():
     lines = raw.splitlines()
 
     current_year = datetime.now().year
-
-    # Syslog date pattern: "Jun 10 07:40:28"
-    date_re = re.compile(r"^(\w{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2})")
 
     totals = {"sent": 0, "deferred": 0, "bounced": 0, "rejected": 0}
     hourly: dict[str, dict[str, int]] = {}
@@ -349,14 +380,9 @@ def stats():
 
         totals[category] += 1
 
-        # Parse timestamp
-        m = date_re.match(line)
-        if not m:
-            continue
-
-        try:
-            dt = datetime.strptime(f"{current_year} {m.group(1)}", "%Y %b %d %H:%M:%S")
-        except ValueError:
+        # Parse timestamp (ISO 8601 or traditional syslog)
+        dt = _parse_log_timestamp(line, current_year)
+        if dt is None:
             continue
 
         hour_key = dt.strftime("%Y-%m-%d %H")

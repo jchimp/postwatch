@@ -237,6 +237,14 @@ function addAgent() {
         showAlert('⚠ URL is required', 'warning');
         return;
     }
+    if (/^https:\/\//i.test(url)) {
+        showAlert('✗ Security mismatch — the agent serves plaintext HTTP. Use http:// (or front it with a TLS reverse proxy).', 'danger');
+        return;
+    }
+    if (!/^http:\/\//i.test(url)) {
+        showAlert('⚠ URL must start with http://', 'warning');
+        return;
+    }
 
     fetch('/api/agents', {
         method: 'POST',

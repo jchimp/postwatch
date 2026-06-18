@@ -73,6 +73,38 @@ def _agent_headers() -> dict:
     return {"X-API-Key": _get_api_key()}
 
 
+def _validate_agent_url(url: str) -> str | None:
+    """Return an error string if the agent URL is unusable, else None.
+
+    The agent serves plaintext HTTP, so an https:// URL means a TLS handshake is
+    sent to a plaintext port — the classic "security mismatch" footgun. Front the
+    agent with a TLS reverse proxy if you need https.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme == "https":
+        return ("Invalid scheme — security mismatch. The agent serves plaintext "
+                "HTTP; use http:// (or put a TLS reverse proxy in front of it).")
+    if parsed.scheme != "http":
+        return "URL must start with http://"
+    if not parsed.hostname:
+        return "URL must include a host, e.g. http://192.168.1.10:5100"
+    return None
+
+
+def _proxy_error(exc: Exception) -> tuple:
+    """Map a proxy exception to a friendly JSON 502 response.
+
+    Detects the https://-to-plaintext-agent case (a TLS error) and explains it,
+    instead of surfacing a raw SSL traceback string.
+    """
+    if isinstance(exc, http_requests.exceptions.SSLError):
+        msg = ("Invalid scheme / security mismatch — the agent URL uses https:// "
+               "but the agent serves plaintext HTTP. Change it to http://.")
+    else:
+        msg = str(exc)
+    return jsonify({"error": msg}), 502
+
+
 def _agent_display(agent: dict) -> str:
     """Label for an agent dropdown: its name, or the host/IP if no real name is set.
 
@@ -206,6 +238,10 @@ def api_add_agent():
     if not url:
         return jsonify({"error": "url is required"}), 400
 
+    url_error = _validate_agent_url(url)
+    if url_error:
+        return jsonify({"error": url_error}), 400
+
     success = models.add_agent(config.DB_PATH, url, name)
     if not success:
         return jsonify({"error": "agent already exists"}), 400
@@ -278,7 +314,7 @@ def api_health(agent_url):
         r = http_requests.get(f"{agent_url}/health", timeout=5)
         return jsonify(r.json()), r.status_code
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return _proxy_error(exc)
 
 
 @app.route("/api/status/<path:agent_url>")
@@ -288,7 +324,7 @@ def api_status(agent_url):
         r = http_requests.get(f"{agent_url}/status", headers=_agent_headers(), timeout=10)
         return jsonify(r.json()), r.status_code
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return _proxy_error(exc)
 
 
 @app.route("/api/queue/<path:agent_url>")
@@ -298,7 +334,7 @@ def api_queue(agent_url):
         r = http_requests.get(f"{agent_url}/queue", headers=_agent_headers(), timeout=10)
         return jsonify(r.json()), r.status_code
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return _proxy_error(exc)
 
 
 @app.route("/api/logs/<path:agent_url>")
@@ -314,7 +350,7 @@ def api_logs(agent_url):
         )
         return jsonify(r.json()), r.status_code
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return _proxy_error(exc)
 
 
 @app.route("/api/logs/stream/<path:agent_url>")
@@ -361,7 +397,55 @@ def api_token_status(agent_url):
         )
         return jsonify(r.json()), r.status_code
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return _proxy_error(exc)
+
+
+@app.route("/api/stats/all")
+@login_required
+def api_stats_all():
+    """Live aggregated stat-card values across all agents ('All Hosts' view).
+
+    Fans out to each agent's /stats (current-window totals) and /queue (queue
+    depth) and sums them. Unreachable agents are skipped, and `reachable`
+    reports how many of `total` agents answered so the UI can flag a partial
+    sum. Charts use /api/charts/all, not this.
+    """
+    agents = models.get_agents(config.DB_PATH)
+    headers = _agent_headers()
+
+    totals = {"sent": 0, "deferred": 0, "bounced": 0, "rejected": 0}
+    queue_count = 0
+    reachable = 0
+
+    for agent in agents:
+        try:
+            r = http_requests.get(
+                f"{agent['url']}/stats", headers=headers, timeout=10
+            )
+            if r.status_code != 200:
+                continue
+            data = r.json()
+        except Exception:
+            continue
+        reachable += 1
+        for cat in totals:
+            totals[cat] += data.get("totals", {}).get(cat, 0)
+
+        try:
+            qr = http_requests.get(
+                f"{agent['url']}/queue", headers=headers, timeout=10
+            )
+            if qr.status_code == 200:
+                queue_count += qr.json().get("queue_count", 0)
+        except Exception:
+            pass
+
+    return jsonify({
+        "totals": totals,
+        "queue_count": queue_count,
+        "reachable": reachable,
+        "total": len(agents),
+    })
 
 
 @app.route("/api/stats/<path:agent_url>")
@@ -371,7 +455,7 @@ def api_stats(agent_url):
         r = http_requests.get(f"{agent_url}/stats", headers=_agent_headers(), timeout=10)
         return jsonify(r.json()), r.status_code
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return _proxy_error(exc)
 
 
 # ── Live proxy: POST actions ─────────────────────────────────────────────────
@@ -385,7 +469,7 @@ def api_restart(agent_url):
         )
         return jsonify(r.json()), r.status_code
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return _proxy_error(exc)
 
 
 @app.route("/api/queue/flush/<path:agent_url>", methods=["POST"])
@@ -397,7 +481,7 @@ def api_queue_flush(agent_url):
         )
         return jsonify(r.json()), r.status_code
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return _proxy_error(exc)
 
 
 @app.route("/api/queue/delete/<path:agent_url>", methods=["POST"])
@@ -409,75 +493,53 @@ def api_queue_delete(agent_url):
         )
         return jsonify(r.json()), r.status_code
     except Exception as exc:
-        return jsonify({"error": str(exc)}), 502
+        return _proxy_error(exc)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# API — stored stats from SQLite
+# API — chart data from SQLite buckets
+#
+# Buckets are backfilled each poll from the agent's /stats (keyed by the time
+# each message was processed), so this is accurate history that survives log
+# rotation. Hourly/daily come straight from the bucket tables; weekly/monthly
+# are rolled up from the daily buckets.
 # ══════════════════════════════════════════════════════════════════════════════
 
-@app.route("/api/chart/daily/<path:agent_url>")
+# How many raw buckets to pull before the frontend gap-fills and slices. Padded
+# so gap-fill has context on either side of the visible window.
+_HOURLY_LIMIT = 72
+_DAILY_LIMIT = 21
+_WEEKLY_LIMIT = 4
+_MONTHLY_LIMIT = 12
+
+
+def _charts_for(agent_url: str | None) -> dict:
+    """Build the {hourly, daily, weekly, monthly} payload for one agent or all."""
+    if agent_url is None:
+        return {
+            "hourly": models.get_buckets_all(config.DB_PATH, "hourly", _HOURLY_LIMIT),
+            "daily": models.get_buckets_all(config.DB_PATH, "daily", _DAILY_LIMIT),
+            "weekly": models.get_period_rollup_all(config.DB_PATH, "%Y-W%W", _WEEKLY_LIMIT),
+            "monthly": models.get_period_rollup_all(config.DB_PATH, "%Y-%m", _MONTHLY_LIMIT),
+        }
+    return {
+        "hourly": models.get_buckets(config.DB_PATH, agent_url, "hourly", _HOURLY_LIMIT),
+        "daily": models.get_buckets(config.DB_PATH, agent_url, "daily", _DAILY_LIMIT),
+        "weekly": models.get_period_rollup(config.DB_PATH, agent_url, "%Y-W%W", _WEEKLY_LIMIT),
+        "monthly": models.get_period_rollup(config.DB_PATH, agent_url, "%Y-%m", _MONTHLY_LIMIT),
+    }
+
+
+@app.route("/api/charts/all")
 @login_required
-def api_chart_daily(agent_url):
-    days = request.args.get("days", 7, type=int)
-    data = models.get_daily_stats(config.DB_PATH, agent_url, days=days)
-    return jsonify(data)
+def api_charts_all():
+    return jsonify(_charts_for(None))
 
 
-@app.route("/api/chart/hourly/<path:agent_url>")
+@app.route("/api/charts/<path:agent_url>")
 @login_required
-def api_chart_hourly(agent_url):
-    hours = request.args.get("hours", 24, type=int)
-    data = models.get_hourly_stats(config.DB_PATH, agent_url, hours=hours)
-    return jsonify(data)
-
-
-@app.route("/api/chart/weekly/<path:agent_url>")
-@login_required
-def api_chart_weekly(agent_url):
-    weeks = request.args.get("weeks", 4, type=int)
-    data = models.get_weekly_stats(config.DB_PATH, agent_url, weeks=weeks)
-    return jsonify(data)
-
-
-@app.route("/api/chart/monthly/<path:agent_url>")
-@login_required
-def api_chart_monthly(agent_url):
-    months = request.args.get("months", 12, type=int)
-    data = models.get_monthly_stats(config.DB_PATH, agent_url, months=months)
-    return jsonify(data)
-
-
-@app.route("/api/chart/daily/all")
-@login_required
-def api_chart_daily_all():
-    days = request.args.get("days", 7, type=int)
-    data = models.get_daily_stats_all(config.DB_PATH, days=days)
-    return jsonify(data)
-
-
-@app.route("/api/chart/hourly/all")
-@login_required
-def api_chart_hourly_all():
-    hours = request.args.get("hours", 24, type=int)
-    data = models.get_hourly_stats_all(config.DB_PATH, hours=hours)
-    return jsonify(data)
-
-
-@app.route("/api/chart/weekly/all")
-@login_required
-def api_chart_weekly_all():
-    weeks = request.args.get("weeks", 4, type=int)
-    data = models.get_weekly_stats_all(config.DB_PATH, weeks=weeks)
-    return jsonify(data)
-
-
-@app.route("/api/chart/monthly/all")
-@login_required
-def api_chart_monthly_all():
-    months = request.args.get("months", 12, type=int)
-    data = models.get_monthly_stats_all(config.DB_PATH, months=months)
-    return jsonify(data)
+def api_charts(agent_url):
+    return jsonify(_charts_for(agent_url))
 
 
 @app.route("/api/snapshot/<path:agent_url>")
@@ -485,14 +547,6 @@ def api_chart_monthly_all():
 def api_snapshot(agent_url):
     snap = models.get_latest_snapshot(config.DB_PATH, agent_url)
     return jsonify(snap or {})
-
-
-@app.route("/api/totals/all")
-@login_required
-def api_totals_all():
-    """Return aggregated totals from latest snapshot of each agent."""
-    totals = models.get_latest_totals_all(config.DB_PATH)
-    return jsonify({"totals": totals})
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

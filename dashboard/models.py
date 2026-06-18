@@ -1,16 +1,24 @@
 """
 postwatch dashboard — models.py
-SQLite helpers for storing and querying polled stats snapshots.
+SQLite helpers for storing and querying mail stats.
 
-The sent/deferred/bounced/rejected columns store DELTAS (change since the last
-snapshot). The raw_* columns store the cumulative totals reported by the agent
-so the next poll can compute the next delta.
+Data model:
+  - hourly_buckets / daily_buckets — accurate mail-volume history, keyed by the
+    time each message was processed (from the agent's log parser). The poller
+    UPSERTs these every cycle with MAX(existing, new) so a bucket grows while its
+    hour/day is still inside the agent's log window, then freezes at the complete
+    value once older lines scroll off. Charts read from here.
+  - stats_snapshots — point-in-time state per poll (postfix active, queue depth,
+    token health, last-poll time). Feeds the Agent Status table. NOT used for
+    volume charts.
 """
 
 import os
 import secrets
 import sqlite3
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+
+CATEGORIES = ("sent", "deferred", "bounced", "rejected")
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
@@ -25,20 +33,13 @@ def init_db(db_path: str) -> None:
     os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
 
     with _connect(db_path) as conn:
+        # Point-in-time poll state (status table). No volume columns.
         conn.execute("""
             CREATE TABLE IF NOT EXISTS stats_snapshots (
                 id            INTEGER PRIMARY KEY AUTOINCREMENT,
                 agent_url     TEXT    NOT NULL,
                 server_name   TEXT,
                 ts            TEXT    NOT NULL,
-                sent          INTEGER DEFAULT 0,
-                deferred      INTEGER DEFAULT 0,
-                bounced       INTEGER DEFAULT 0,
-                rejected      INTEGER DEFAULT 0,
-                raw_sent      INTEGER DEFAULT 0,
-                raw_deferred  INTEGER DEFAULT 0,
-                raw_bounced   INTEGER DEFAULT 0,
-                raw_rejected  INTEGER DEFAULT 0,
                 queue_count   INTEGER DEFAULT 0,
                 token_status  TEXT,
                 active        INTEGER DEFAULT 1
@@ -49,16 +50,32 @@ def init_db(db_path: str) -> None:
             ON stats_snapshots (agent_url, ts)
         """)
 
-        # Migrate existing DBs: add raw_* columns if they don't exist yet.
-        existing_cols = {
-            row["name"]
-            for row in conn.execute("PRAGMA table_info(stats_snapshots)").fetchall()
-        }
-        for col in ("raw_sent", "raw_deferred", "raw_bounced", "raw_rejected"):
-            if col not in existing_cols:
-                conn.execute(
-                    f"ALTER TABLE stats_snapshots ADD COLUMN {col} INTEGER DEFAULT 0"
-                )
+        # Accurate mail-volume buckets, keyed by processing time.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS hourly_buckets (
+                agent_url  TEXT    NOT NULL,
+                bucket     TEXT    NOT NULL,           -- "YYYY-MM-DD HH" (agent local time)
+                sent       INTEGER DEFAULT 0,
+                deferred   INTEGER DEFAULT 0,
+                bounced    INTEGER DEFAULT 0,
+                rejected   INTEGER DEFAULT 0,
+                updated    TEXT    NOT NULL,
+                PRIMARY KEY (agent_url, bucket)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS daily_buckets (
+                agent_url  TEXT    NOT NULL,
+                bucket     TEXT    NOT NULL,           -- "YYYY-MM-DD" (agent local time)
+                sent       INTEGER DEFAULT 0,
+                deferred   INTEGER DEFAULT 0,
+                bounced    INTEGER DEFAULT 0,
+                rejected   INTEGER DEFAULT 0,
+                updated    TEXT    NOT NULL,
+                PRIMARY KEY (agent_url, bucket)
+            )
+        """)
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS agents (
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -107,265 +124,28 @@ def init_db(db_path: str) -> None:
         conn.commit()
 
 
+# ── Snapshots (point-in-time poll state) ──────────────────────────────────────
+
 def save_snapshot(
     db_path: str,
     agent_url: str,
     server_name: str,
     ts: str,
-    sent: int,
-    deferred: int,
-    bounced: int,
-    rejected: int,
-    raw_sent: int,
-    raw_deferred: int,
-    raw_bounced: int,
-    raw_rejected: int,
     queue_count: int,
     token_status_json: str | None,
     active: bool,
 ) -> None:
-    """Insert a single stats snapshot row (deltas + raw cumulative)."""
+    """Insert a single point-in-time snapshot (status, queue, token health)."""
     with _connect(db_path) as conn:
         conn.execute(
             """
             INSERT INTO stats_snapshots
-                (agent_url, server_name, ts,
-                 sent, deferred, bounced, rejected,
-                 raw_sent, raw_deferred, raw_bounced, raw_rejected,
-                 queue_count, token_status, active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (agent_url, server_name, ts, queue_count, token_status, active)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (
-                agent_url,
-                server_name,
-                ts,
-                sent,
-                deferred,
-                bounced,
-                rejected,
-                raw_sent,
-                raw_deferred,
-                raw_bounced,
-                raw_rejected,
-                queue_count,
-                token_status_json,
-                1 if active else 0,
-            ),
+            (agent_url, server_name, ts, queue_count, token_status_json, 1 if active else 0),
         )
         conn.commit()
-
-
-def get_last_totals(db_path: str, agent_url: str) -> dict | None:
-    """Return the raw cumulative totals from the most recent snapshot.
-
-    Used by the poller to compute deltas for the next snapshot.
-    Returns None if no previous snapshot exists for this agent.
-    """
-    with _connect(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT raw_sent, raw_deferred, raw_bounced, raw_rejected
-            FROM stats_snapshots
-            WHERE agent_url = ?
-            ORDER BY ts DESC
-            LIMIT 1
-            """,
-            (agent_url,),
-        ).fetchone()
-
-    return dict(row) if row else None
-
-
-def get_daily_stats(db_path: str, agent_url: str, days: int = 7) -> list[dict]:
-    """Return daily aggregated deltas for the last N days."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                date(ts)       AS day,
-                SUM(sent)      AS sent,
-                SUM(deferred)  AS deferred,
-                SUM(bounced)   AS bounced,
-                SUM(rejected)  AS rejected
-            FROM stats_snapshots
-            WHERE agent_url = ? AND ts >= ?
-            GROUP BY date(ts)
-            ORDER BY day
-            """,
-            (agent_url, cutoff),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
-
-
-def get_hourly_stats(db_path: str, agent_url: str, hours: int = 24) -> list[dict]:
-    """Return hourly aggregated deltas for the last N hours."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                strftime('%Y-%m-%d %H', ts) AS hour,
-                SUM(sent)                   AS sent,
-                SUM(deferred)               AS deferred,
-                SUM(bounced)                AS bounced,
-                SUM(rejected)               AS rejected
-            FROM stats_snapshots
-            WHERE agent_url = ? AND ts >= ?
-            GROUP BY strftime('%Y-%m-%d %H', ts)
-            ORDER BY hour
-            """,
-            (agent_url, cutoff),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
-
-
-def get_weekly_stats(db_path: str, agent_url: str, weeks: int = 4) -> list[dict]:
-    """Return weekly aggregated deltas for the last N weeks."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat()
-
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                strftime('%Y-W%W', ts) AS week,
-                SUM(sent)              AS sent,
-                SUM(deferred)          AS deferred,
-                SUM(bounced)           AS bounced,
-                SUM(rejected)          AS rejected
-            FROM stats_snapshots
-            WHERE agent_url = ? AND ts >= ?
-            GROUP BY strftime('%Y-W%W', ts)
-            ORDER BY week
-            """,
-            (agent_url, cutoff),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
-
-
-def get_monthly_stats(db_path: str, agent_url: str, months: int = 12) -> list[dict]:
-    """Return monthly aggregated deltas for the last N months."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=months*30)).isoformat()
-
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                strftime('%Y-%m', ts) AS month,
-                SUM(sent)             AS sent,
-                SUM(deferred)         AS deferred,
-                SUM(bounced)          AS bounced,
-                SUM(rejected)         AS rejected
-            FROM stats_snapshots
-            WHERE agent_url = ? AND ts >= ?
-            GROUP BY strftime('%Y-%m', ts)
-            ORDER BY month
-            """,
-            (agent_url, cutoff),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
-
-
-def get_daily_stats_all(db_path: str, days: int = 7) -> list[dict]:
-    """Return aggregated daily deltas across all agents for the last N days."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                date(ts)       AS day,
-                SUM(sent)      AS sent,
-                SUM(deferred)  AS deferred,
-                SUM(bounced)   AS bounced,
-                SUM(rejected)  AS rejected
-            FROM stats_snapshots
-            WHERE ts >= ?
-            GROUP BY date(ts)
-            ORDER BY day
-            """,
-            (cutoff,),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
-
-
-def get_hourly_stats_all(db_path: str, hours: int = 24) -> list[dict]:
-    """Return aggregated hourly deltas across all agents for the last N hours."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
-
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                strftime('%Y-%m-%d %H', ts) AS hour,
-                SUM(sent)                   AS sent,
-                SUM(deferred)               AS deferred,
-                SUM(bounced)                AS bounced,
-                SUM(rejected)               AS rejected
-            FROM stats_snapshots
-            WHERE ts >= ?
-            GROUP BY strftime('%Y-%m-%d %H', ts)
-            ORDER BY hour
-            """,
-            (cutoff,),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
-
-
-def get_weekly_stats_all(db_path: str, weeks: int = 4) -> list[dict]:
-    """Return aggregated weekly deltas across all agents for the last N weeks."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(weeks=weeks)).isoformat()
-
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                strftime('%Y-W%W', ts) AS week,
-                SUM(sent)              AS sent,
-                SUM(deferred)          AS deferred,
-                SUM(bounced)           AS bounced,
-                SUM(rejected)          AS rejected
-            FROM stats_snapshots
-            WHERE ts >= ?
-            GROUP BY strftime('%Y-W%W', ts)
-            ORDER BY week
-            """,
-            (cutoff,),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
-
-
-def get_monthly_stats_all(db_path: str, months: int = 12) -> list[dict]:
-    """Return aggregated monthly deltas across all agents for the last N months."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=months*30)).isoformat()
-
-    with _connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                strftime('%Y-%m', ts) AS month,
-                SUM(sent)             AS sent,
-                SUM(deferred)         AS deferred,
-                SUM(bounced)          AS bounced,
-                SUM(rejected)         AS rejected
-            FROM stats_snapshots
-            WHERE ts >= ?
-            GROUP BY strftime('%Y-%m', ts)
-            ORDER BY month
-            """,
-            (cutoff,),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
 
 
 def get_latest_snapshot(db_path: str, agent_url: str) -> dict | None:
@@ -384,33 +164,139 @@ def get_latest_snapshot(db_path: str, agent_url: str) -> dict | None:
     return dict(row) if row else None
 
 
-def get_latest_totals_all(db_path: str) -> dict:
-    """Return aggregated totals from the latest snapshot of each agent.
+# ── Volume buckets (accurate, mail-time history) ──────────────────────────────
 
-    Uses the most recent snapshot per agent to avoid counting the same
-    running totals multiple times. Returns totals that match the agent logs.
+def upsert_buckets(db_path: str, agent_url: str, period: str, buckets: dict) -> None:
+    """UPSERT a map of {bucket_key: {sent, deferred, ...}} into hourly/daily.
+
+    Uses MAX(existing, new) per category so a bucket only ever grows. While the
+    bucket's hour/day is fully inside the agent's log window the count climbs to
+    its true total; once older lines scroll off the agent reports a smaller
+    (partial) count, and MAX preserves the complete value already stored.
+
+    period must be "hourly" or "daily".
+    """
+    table = {"hourly": "hourly_buckets", "daily": "daily_buckets"}[period]
+    now = datetime.now(timezone.utc).isoformat()
+
+    rows = [
+        (
+            agent_url,
+            key,
+            int(cats.get("sent", 0)),
+            int(cats.get("deferred", 0)),
+            int(cats.get("bounced", 0)),
+            int(cats.get("rejected", 0)),
+            now,
+        )
+        for key, cats in buckets.items()
+    ]
+    if not rows:
+        return
+
+    with _connect(db_path) as conn:
+        conn.executemany(
+            f"""
+            INSERT INTO {table}
+                (agent_url, bucket, sent, deferred, bounced, rejected, updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(agent_url, bucket) DO UPDATE SET
+                sent     = MAX(sent,     excluded.sent),
+                deferred = MAX(deferred, excluded.deferred),
+                bounced  = MAX(bounced,  excluded.bounced),
+                rejected = MAX(rejected, excluded.rejected),
+                updated  = excluded.updated
+            """,
+            rows,
+        )
+        conn.commit()
+
+
+def _bucket_table(period: str) -> str:
+    return {"hourly": "hourly_buckets", "daily": "daily_buckets"}[period]
+
+
+def get_buckets(db_path: str, agent_url: str, period: str, limit: int) -> dict:
+    """Return the most recent `limit` buckets for one agent as {key: {cats}}."""
+    table = _bucket_table(period)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT bucket, sent, deferred, bounced, rejected
+            FROM {table}
+            WHERE agent_url = ?
+            ORDER BY bucket DESC
+            LIMIT ?
+            """,
+            (agent_url, limit),
+        ).fetchall()
+    return {
+        r["bucket"]: {c: r[c] for c in CATEGORIES}
+        for r in rows
+    }
+
+
+def get_buckets_all(db_path: str, period: str, limit: int) -> dict:
+    """Return the most recent `limit` buckets summed across all agents."""
+    table = _bucket_table(period)
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT bucket,
+                   SUM(sent) AS sent, SUM(deferred) AS deferred,
+                   SUM(bounced) AS bounced, SUM(rejected) AS rejected
+            FROM {table}
+            GROUP BY bucket
+            ORDER BY bucket DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return {
+        r["bucket"]: {c: r[c] for c in CATEGORIES}
+        for r in rows
+    }
+
+
+def get_period_rollup(db_path: str, agent_url: str, fmt: str, limit: int) -> list[dict]:
+    """Aggregate daily_buckets into longer periods for one agent.
+
+    `fmt` is an sqlite strftime format applied to the daily bucket date, e.g.
+    "%Y-W%W" (ISO-ish week) or "%Y-%m" (month). Returns oldest-first.
     """
     with _connect(db_path) as conn:
-        row = conn.execute(
-            """
-            SELECT
-                SUM(raw_sent) AS sent,
-                SUM(raw_deferred) AS deferred,
-                SUM(raw_bounced) AS bounced,
-                SUM(raw_rejected) AS rejected
-            FROM (
-                SELECT agent_url, raw_sent, raw_deferred, raw_bounced, raw_rejected
-                FROM stats_snapshots
-                WHERE (agent_url, ts) IN (
-                    SELECT agent_url, MAX(ts)
-                    FROM stats_snapshots
-                    GROUP BY agent_url
-                )
-            )
+        rows = conn.execute(
+            f"""
+            SELECT strftime('{fmt}', bucket) AS period,
+                   SUM(sent) AS sent, SUM(deferred) AS deferred,
+                   SUM(bounced) AS bounced, SUM(rejected) AS rejected
+            FROM daily_buckets
+            WHERE agent_url = ?
+            GROUP BY period
+            ORDER BY period DESC
+            LIMIT ?
             """,
-        ).fetchone()
+            (agent_url, limit),
+        ).fetchall()
+    return [dict(r) for r in reversed(rows)]
 
-    return dict(row) if row else {"sent": 0, "deferred": 0, "bounced": 0, "rejected": 0}
+
+def get_period_rollup_all(db_path: str, fmt: str, limit: int) -> list[dict]:
+    """Aggregate daily_buckets into longer periods across all agents."""
+    with _connect(db_path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT strftime('{fmt}', bucket) AS period,
+                   SUM(sent) AS sent, SUM(deferred) AS deferred,
+                   SUM(bounced) AS bounced, SUM(rejected) AS rejected
+            FROM daily_buckets
+            GROUP BY period
+            ORDER BY period DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in reversed(rows)]
 
 
 # ── Agent management ──────────────────────────────────────────────────────────

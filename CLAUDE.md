@@ -63,7 +63,7 @@ part2 = """## Agent Endpoints
 - **Frontend JS**: Each template has `{% block scripts %}` — vanilla JS, no framework. Calls `/api/*` with `fetch()`.
 - **SSE chain**: `tail -F` → agent generator → `text/event-stream` → dashboard proxy → browser `EventSource`.
 - **Config**: Startup via `.env` (python-dotenv). Runtime via SQLite `settings` table (API key, token thresholds) and `agents` table (agent URLs/names).
-- **Charts**: Chart.js in `overview.html`. Daily data from `/api/chart/daily/` (SQLite). Live stats from `/api/stats/` (agent).
+- **Charts**: Chart.js in `overview.html`. All four charts read SQLite **bucket tables** via `/api/charts/<agent>` and `/api/charts/all`. Buckets are backfilled each poll from the agent's `/stats` (keyed by mail-processing time), so history survives log rotation. Stat **cards** stay live from `/api/stats/<agent>` and `/api/stats/all` (current-window totals).
 
 ## Common Tasks
 
@@ -113,14 +113,29 @@ cd dashboard && docker compose up --build
 - **Endpoint:** `/api/totals/all` — sums latest snapshots from all agents
 - **Implementation:** `get_latest_totals_all()` in models.py
 
-### 4-Chart View (Hourly, Daily, Weekly, Monthly)
-- **Charts:** Overview page displays all 4 time-period charts for single-agent and "All Hosts" modes
-- **Daily:** Last 7 days (grouped by day)
-- **Hourly:** Last 24 hours (grouped by hour)
-- **Weekly:** Last 4 weeks (grouped by ISO week)
-- **Monthly:** Last 12 months (grouped by month)
-- **Endpoints:** `/api/chart/{daily|hourly|weekly|monthly}/{agent_url|all}`
-- **Functions:** `get_daily_stats()`, `get_hourly_stats()`, `get_weekly_stats()`, `get_monthly_stats()` for per-agent; `_all()` variants for aggregation
+### Persisted Bucket Charts (accurate history, survives log rotation)
+- **Why:** The original SQLite snapshots were bucketed by *poll time*, not *mail
+  time* — the first poll after a restart/log-rotation dumped the whole backlog
+  into one bucket → artificial midnight spike. The agent now timestamps each log
+  line correctly (`_parse_log_timestamp` handles ISO-8601 + BSD syslog), and the
+  poller persists those accurate buckets so charts have durable history.
+- **Tables:** `hourly_buckets` / `daily_buckets`, PK `(agent_url, bucket)`.
+  Bucket keys are agent-local `YYYY-MM-DD HH` / `YYYY-MM-DD`.
+- **UPSERT with `MAX(existing, new)`** (`upsert_buckets` in `models.py`): a bucket
+  grows while its hour/day is fully inside the agent's log window, then freezes at
+  the complete value once older lines scroll off. No deltas, no double-counting.
+- **Charts:** Hourly (24 h) + Daily (7 d) read buckets directly, gap-filled to
+  zero bars in JS (`expandHourly`/`expandDaily`). Weekly (4 w) + Monthly (12 mo)
+  are rolled up from `daily_buckets` in SQL (`get_period_rollup`).
+- **Endpoints:** `/api/charts/<agent>` and `/api/charts/all` return
+  `{hourly, daily, weekly, monthly}`. Cards use `/api/stats/<agent>` and
+  `/api/stats/all` (live current-window totals).
+- **`stats_snapshots` slimmed** to point-in-time state only (`queue_count`,
+  `token_status`, `active`, `ts`) — feeds the Agent Status table. All delta /
+  `raw_*` columns and `_compute_delta` were removed; the poller no longer
+  computes deltas. **Schema changed → existing DB must be recreated.**
+- **Trade-off:** Buckets older than the agent's first poll are never seen; the
+  very oldest in-window hour at first-ever poll may be slightly undercounted.
 
 ### API Key Auth Error Handling
 - **Before:** Mismatched API key showed "Online · postfix down" (misleading)

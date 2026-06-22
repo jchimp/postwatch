@@ -237,25 +237,6 @@ PORT=5000
 - Agent URLs and names (add/remove agents)
 - Token thresholds: `TOKEN_STALE_MINUTES` and `TOKEN_EXPIRY_WARN_MINUTES` (applied globally)
 
-## API Endpoints (Agent)
-
-| Route | Method | Auth | Action |
-|-------|--------|------|--------|
-| `/health` | GET | — | Health check |
-| `/status` | GET | API Key | `systemctl status postfix` |
-| `/queue` | GET | API Key | `mailq` output + count |
-| `/logs` | GET | API Key | Last 200 lines (supports `?search=` filter) |
-| `/logs/stream` | GET | API Key | Real-time log tail (SSE) |
-| `/stats` | GET | API Key | Parsed stats → hourly/daily buckets |
-| `/token-status` | GET | API Key | Token health (age, expiry, staleness) |
-| `/restart` | POST | API Key | `systemctl restart postfix` |
-| `/queue/flush` | POST | API Key | `postqueue -f` |
-| `/queue/delete` | POST | API Key | `postsuper -d ALL` |
-
-**Auth:** All endpoints except `/health` require `X-API-Key: <API_KEY>` header.
-
-**Responses:** JSON. HTTP codes: `200` OK, `401` bad/missing key, `404` not found, `502` agent unreachable.
-
 ## Dashboard Pages
 
 | Page | Purpose |
@@ -279,6 +260,25 @@ After logging in, click **⚙️ Settings** in the navbar to:
   - Format: `http://192.168.1.10:5100`
   - Optional name: `mail-relay-1`
 - **Remove agents** — delete from monitoring (requires confirmation)
+
+## API Endpoints (Agent)
+
+| Route | Method | Auth | Action |
+|-------|--------|------|--------|
+| `/health` | GET | — | Health check |
+| `/status` | GET | API Key | `systemctl status postfix` |
+| `/queue` | GET | API Key | `mailq` output + count |
+| `/logs` | GET | API Key | Last 200 lines (supports `?search=` filter) |
+| `/logs/stream` | GET | API Key | Real-time log tail (SSE) |
+| `/stats` | GET | API Key | Parsed stats → hourly/daily buckets |
+| `/token-status` | GET | API Key | Token health (age, expiry, staleness) |
+| `/restart` | POST | API Key | `systemctl restart postfix` |
+| `/queue/flush` | POST | API Key | `postqueue -f` |
+| `/queue/delete` | POST | API Key | `postsuper -d ALL` |
+
+**Auth:** All endpoints except `/health` require `X-API-Key: <API_KEY>` header.
+
+**Responses:** JSON. HTTP codes: `200` OK, `401` bad/missing key, `404` not found, `502` agent unreachable.
 
 ## Development
 

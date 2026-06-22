@@ -357,7 +357,7 @@ postwatch/
 
 ## License
 
-[Your License Here]
+[MIT License](LICENSE)
 
 ## Contact
 

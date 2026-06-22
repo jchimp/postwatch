@@ -1,8 +1,12 @@
 # Postwatch
 
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A lightweight, two-component Postfix monitoring dashboard for tracking mail server health across your infrastructure.
 
 **Agent** (per mail server) + **Dashboard** (centralized, Docker).
+
+![Dashboard](docs/images/postwatch_screenshot.png "Main Dashboard View")
 
 ## Features
 
